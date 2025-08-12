@@ -1,0 +1,15 @@
+name = "EditTest"
+version = "0.1.0"
+defaultTargets = ["EditTest", "write_edits"]
+
+[[lean_lib]]
+name = "EditTest"
+
+[[lean_exe]]
+name = "write_edits"
+root = "EditTest.Execute"
+
+[[require]]
+name = "batteries"
+scope = "leanprover-community"
+rev = "main"
