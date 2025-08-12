@@ -33,13 +33,15 @@ def String.Range.cmp (r₁ r₂ : String.Range) : Ordering :=
 def Edit.cmp (e₁ e₂ : Edit) : Ordering :=
   e₁.range.cmp e₂.range
 
+@[inline] def Array.sortEdits (edits : Array Edit) : Array Edit :=
+  edits.qsort fun e₁ e₂ => e₁.cmp e₂ |>.isLT
+
 initialize editExt : PersistentEnvExtension Edit (List Edit) (List Edit) ←
   registerPersistentEnvExtension {
     mkInitial       := pure {}
     addImportedFn   := fun _ _ => pure {}
     addEntryFn      := fun edits es => es ++ edits
-    exportEntriesFn := fun edits =>
-      edits.toArray.qsort fun e₁ e₂ => e₁.cmp e₂ |>.isLT
+    exportEntriesFn := fun edits => edits.toArray.sortEdits
     statsFn         := fun s => "edits added: " ++ f!"{repr s}"
     asyncMode       := .sync -- hmm
     replay?         := none
