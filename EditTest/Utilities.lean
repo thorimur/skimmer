@@ -6,18 +6,6 @@ def Edit.delete (range : String.Range) : Edit where
   range
   replacement := ""
 
-/-- Assumes `edits` is sorted. -/
-def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
-  -- Mario's code:
-  let mut pos : String.Pos := 0
-  let mut out : String := ""
-  for edit in edits do -- already sorted
-    if pos ≤ edit.range.start then
-      out := out ++ text.extract pos edit.range.start ++ edit.replacement
-      pos := edit.range.stop
-  out := out ++ text.extract pos text.endPos
-  return out
-
 -- In future: need to account for things like code fencing. Should maybe detect by lack of good punctiation at end?
 def removeBadNewlines (s : String) (stop : String.Pos := s.endPos) : List Edit := Id.run <| do
   let mut i : String.Pos := 0
@@ -89,11 +77,11 @@ open String in
     if p (s.get pos) then
       have := Nat.sub_lt_sub_left h (lt_next s pos)
       s.matchBeforeAux p stopPos (count + 1) (s.next pos)
-    else if pos = stopPos then
-      (count, pos)
     else
-      (count - 1, stopPos)
-  else (count, pos)
+      (count, pos)
+  else if pos = stopPos then
+    (count, pos)
+  else (count - 1, stopPos)
 termination_by stopPos.1 - pos.1
 
 def String.matchAtMostN (s : String) (p : Char → Bool) (max : Nat) (startPos : Pos := 0)
@@ -120,7 +108,7 @@ def String.findFromUntil? (s : String) (p : Char → Bool)
 def String.findNontrivialStartOfLine? (s : String)
     (startPos : String.Pos := 0) (stopPos := s.endPos) : Option String.Pos := do
   let l ← s.findFromUntil? (· = '\n') startPos stopPos
-  return (s.match (· = '\n') l stopPos).2
+  s.findFromUntil? (!· = '\n') l stopPos
 
 /-- The first indent after the first (consecutive sequence of) newline(s), given in the form
 (numberOfSpaces, ⟨start, stop⟩). -/
@@ -160,18 +148,48 @@ def Lean.FileMap.dedents? (map : FileMap) (r : String.Range) (customIndent? : Op
         none
     else none
   match firstDedent?, map.source.dedents? indent r.start r.stop with
+  | none, a => a
   | some edit, some edits => some (edits.push edit) -- will be sorted by the extension
-  | none, some edits => some edits
   | some edit, none => some #[edit]
-  | none, none => none
-
 where
   getFirstLineIndent (map : FileMap) (r : String.Range) : String.Pos × Nat × String.Pos :=
     let lineStart := map.lineStart (map.toPosition r.start).line
     (lineStart, map.source.match (· = ' ') (startPos := lineStart) (stopPos := r.start))
 
-def Lean.FileMap.getLineContents (map : FileMap) (line : Nat) : String :=
-  map.source.extract (map.lineStart line) (map.lineStart (line + 1))
+def Lean.FileMap.getLineContents (map : FileMap) (line : Nat) (lastLine := line) : String :=
+  map.source.extract (map.lineStart line) (map.lineStart (lastLine + 1))
+
+def Lean.FileMap.getLines (map : FileMap) (range : String.Range) : Nat × Nat :=
+  ((map.toPosition range.start).line, (map.toPosition range.stop).line)
+
+elab "#test" doc:docComment : command => do
+  if let some range := doc.raw.getRange? then
+    let map ← getFileMap
+    let (firstLine, lastLine) := map.getLines range
+    let some edits := map.dedents? range (some 0) true | logWarning "No edits"
+    logInfo m!"{edits}"
+    -- let i := map.source.findExtraSpaceIndentBySecondLine? range.1 range.2
+    let some i := map.source.findNontrivialStartOfLine? range.1 range.2 | throwError "no start"
+    logInfo m!"i: \"{repr <| map.source.get i}\" @{i}"
+    logInfo m!"i: \"{repr <| map.source.extract (i - ⟨2⟩) (i + ⟨2⟩)}\""
+    let j := map.source.match (· = ' ') i range.2
+    logInfo m!"j: {j.1} {repr <| map.source.get j.2}@{j} {j.2} ~ {range.2} {decide <| j.2 < range.2}"
+    let poses := Id.run do
+      let mut a := #[]
+      let mut pos := range.2
+      for _ in [:5] do
+        a := a.push pos
+        pos := map.source.next pos
+      pure a
+    logInfo m!"poses := {poses}"
+    let newMap := (map.source.applyEdits edits.sortEdits).toFileMap
+    logInfo m!"{newMap.getLineContents firstLine lastLine}"
+
+
+#test
+  /-- fooo
+    abcde -/
+
 
 -- /-- Treats `s` as a single line (assuming that the newline is at the end) and so only dedents the first line. Does not check that `s` is a single line. -/
 -- def String.dedentLineEdit (s : String) (limit : Option String.Pos := none) : Option Edit := Id.run do
@@ -206,12 +224,6 @@ elab "#show_filemap" : command => do
   let indent := if precededBy.all (· = ' ') then precededBy.endPos else 0
   logInfo m!"{repr <| "(" ++ map.source.extract r.1 r.2 ++ ")"}"
   logInfo m!"{indent}"
-  logInfo m!"{map.dedentEdit? r}"
-
-#show_filemap
-
-def dedentRange (range : String.Range) (map : Lean.FileMap)
-
 
 
 elab "#show_doc " doc:docComment : command => do
@@ -224,13 +236,7 @@ elab "#show_doc " doc:docComment : command => do
 -- #print getDocStringText
 
 -- #print String.
-#show_doc /--
-     r
 
-
-
-3
--/
 
 /-
 def test := "a
