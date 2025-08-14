@@ -108,7 +108,7 @@ def String.findFromUntil? (s : String) (p : Char → Bool)
 def String.findNontrivialStartOfLine? (s : String)
     (startPos : String.Pos := 0) (stopPos := s.endPos) : Option String.Pos := do
   let l ← s.findFromUntil? (· = '\n') startPos stopPos
-  s.findFromUntil? (!· = '\n') l stopPos
+  return (s.match (· = '\n') l stopPos).2
 
 /-- The first indent after the first (consecutive sequence of) newline(s), given in the form
 (numberOfSpaces, ⟨start, stop⟩). -/
@@ -187,8 +187,8 @@ elab "#test" doc:docComment : command => do
 
 
 #test
-  /-- fooo
-    abcde -/
+      /-- The sum of `f y` over `y ∈ g '' s` equals the sum of `f (g i)` over `s` provided that
+          `g` is injective on `s ∩ support (f ∘ g)`. -/
 
 
 -- /-- Treats `s` as a single line (assuming that the newline is at the end) and so only dedents the first line. Does not check that `s` is a single line. -/
