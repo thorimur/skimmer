@@ -55,8 +55,10 @@ deriving instance Repr for FileMap
 instance : Ord Lean.Position where
   compare p₁ p₂ := compare p₁.line p₂.line |>.then <| compare p₁.column p₂.column
 
+namespace String
+
 open String in
-@[inline] def String.matchAtMostNAux (s : String) (p : Char → Bool) (stopPos : String.Pos)
+@[inline] def matchAtMostNAux (s : String) (p : Char → Bool) (stopPos : String.Pos)
     (max : Nat) (pos : Pos) : Nat × Pos :=
   if 0 < max then
     if pos < stopPos then
@@ -71,7 +73,7 @@ open String in
   else (max, pos)
 
 open String in
-@[inline] def String.matchBeforeAux (s : String) (p : Char → Bool) (stopPos : Pos)
+@[inline] def matchBeforeAux (s : String) (p : Char → Bool) (stopPos : Pos)
     (count : Nat) (pos : Pos) : Nat × Pos :=
   if h : pos < stopPos then
     if p (s.get pos) then
@@ -84,11 +86,11 @@ open String in
   else (count - 1, stopPos)
 termination_by stopPos.1 - pos.1
 
-def String.matchAtMostN (s : String) (p : Char → Bool) (max : Nat) (startPos : Pos := 0)
+def matchAtMostN (s : String) (p : Char → Bool) (max : Nat) (startPos : Pos := 0)
     (stopPos : String.Pos := s.endPos) : Pos :=
   (s.matchAtMostNAux p stopPos max startPos).2
 
-def String.matchN? (s : String) (p : Char → Bool) (n : Nat) (startPos : Pos := 0) (stopPos : Pos := s.endPos) :
+def matchN? (s : String) (p : Char → Bool) (n : Nat) (startPos : Pos := 0) (stopPos : Pos := s.endPos) :
     Option String.Pos :=
   if n = 0 then
     startPos
@@ -96,29 +98,29 @@ def String.matchN? (s : String) (p : Char → Bool) (n : Nat) (startPos : Pos :=
     let (remaining, pos) := s.matchAtMostNAux p stopPos n startPos
     if remaining = 0 then some pos else none
 
-def String.match (s : String) (p : Char → Bool) (startPos : Pos := 0) (stopPos : Pos := s.endPos) :
+def «match» (s : String) (p : Char → Bool) (startPos : Pos := 0) (stopPos : Pos := s.endPos) :
     Nat × String.Pos :=
   s.matchBeforeAux p stopPos 0 startPos
 
-def String.findFromUntil? (s : String) (p : Char → Bool)
+def findFromUntil? (s : String) (p : Char → Bool)
     (startPos : String.Pos := 0) (stopPos : String.Pos := s.endPos) : Option String.Pos := Id.run do
   let i := findAux s p stopPos startPos
   if i >= stopPos then return none else return i
 
-def String.findNontrivialStartOfLine? (s : String)
+def findNontrivialStartOfLine? (s : String)
     (startPos : String.Pos := 0) (stopPos := s.endPos) : Option String.Pos := do
   let l ← s.findFromUntil? (· = '\n') startPos stopPos
   return (s.match (· = '\n') l stopPos).2
 
 /-- The first indent after the first (consecutive sequence of) newline(s), given in the form
 (numberOfSpaces, ⟨start, stop⟩). -/
-def String.findExtraSpaceIndentBySecondLine? (s : String)
+def findExtraSpaceIndentBySecondLine? (s : String)
     (startPos : String.Pos := 0) (stopPos := s.endPos) : Option (Nat × String.Range) := do
   let l ← s.findNontrivialStartOfLine? startPos stopPos
   let (count, i) ← s.match (· = ' ') l stopPos
   return (count, ⟨l, i⟩)
 
-def String.dedents? (s : String) (indent : Nat := 0)
+def dedents? (s : String) (indent : Nat := 0)
     (startPos : String.Pos := 0) (stopPos := s.endPos) : Option (Array Edit) := do
   let (extraIndent, ir) ← s.findExtraSpaceIndentBySecondLine? startPos stopPos
   let dedent := extraIndent - indent
@@ -134,13 +136,35 @@ def String.dedents? (s : String) (indent : Nat := 0)
     i := j₁
   if edits.isEmpty then none else return edits
 
-def Lean.FileMap.dedents? (map : FileMap) (r : String.Range) (customIndent? : Option Nat := none)
+end String
+
+namespace Lean.FileMap
+
+@[inline] def lineStartOfPos (map : FileMap) (pos : String.Pos) : String.Pos :=
+  map.lineStart (map.toPosition pos).line
+
+-- TODO: check that this works as expected at eof
+/-- Gives the position of the start of the next line. -/
+@[inline] def lineEndOfPos (map : FileMap) (pos : String.Pos) : String.Pos :=
+  map.lineStart ((map.toPosition pos).line + 1)
+
+/-- Returns `(lineStart, numSpaces, stopIndent)`. Note that `stopIndent` may be earlier than `pos`, but is not later. Only considers spaces to be indent characters (not tabs). -/
+def getIndentBefore (map : FileMap) (pos : String.Pos) : String.Pos × Nat × String.Pos :=
+  let lineStart := map.lineStartOfPos pos
+  (lineStart, map.source.match (· = ' ') (startPos := lineStart) (stopPos := pos))
+
+def getIndentTo? (map : FileMap) (pos : String.Pos) : Option (String.Pos × Nat) :=
+  let (lineStart, indent, endPos) := map.getIndentBefore pos
+  if pos = endPos then some (lineStart, indent) else none
+
+def dedents? (map : FileMap) (r : String.Range) (customIndent? : Option Nat := none)
     (dedentFirstLine := false) : Option (Array Edit) := do
+  -- structure this code better, esp. `indent` and `firstDedent?`
   let indent := customIndent?.getD <|
-    let (_, indent, endPos) := getFirstLineIndent map r
+    let (_, indent, endPos) := map.getIndentBefore r.start
     if endPos = r.start then indent else 0
   let firstDedent? := if dedentFirstLine then
-      let (lineStart, actualIndent, endPos) := getFirstLineIndent map r
+      let (lineStart, actualIndent, endPos) := map.getIndentBefore r.start
       let indent := customIndent?.getD 0
       if indent < actualIndent then
         some (Edit.delete { start := lineStart + ⟨indent⟩, stop := endPos })
@@ -151,16 +175,14 @@ def Lean.FileMap.dedents? (map : FileMap) (r : String.Range) (customIndent? : Op
   | none, a => a
   | some edit, some edits => some (edits.push edit) -- will be sorted by the extension
   | some edit, none => some #[edit]
-where
-  getFirstLineIndent (map : FileMap) (r : String.Range) : String.Pos × Nat × String.Pos :=
-    let lineStart := map.lineStart (map.toPosition r.start).line
-    (lineStart, map.source.match (· = ' ') (startPos := lineStart) (stopPos := r.start))
 
-def Lean.FileMap.getLineContents (map : FileMap) (line : Nat) (lastLine := line) : String :=
+def getLineContents (map : FileMap) (line : Nat) (lastLine := line) : String :=
   map.source.extract (map.lineStart line) (map.lineStart (lastLine + 1))
 
-def Lean.FileMap.getLines (map : FileMap) (range : String.Range) : Nat × Nat :=
+def getLines (map : FileMap) (range : String.Range) : Nat × Nat :=
   ((map.toPosition range.start).line, (map.toPosition range.stop).line)
+
+end Lean.FileMap
 
 elab "#test" doc:docComment : command => do
   if let some range := doc.raw.getRange? then
