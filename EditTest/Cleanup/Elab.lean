@@ -1,0 +1,51 @@
+import EditTest.Cleanup.Attr
+
+open Lean Elab Command Parser
+
+#check Language.DynamicSnapshot
+#check Language.SnapshotTree.waitAll
+
+-- def Lean.Elab.Command.waitForAllTasks : CommandElabM Unit := do
+--   for snap in (← get).snapshotTasks do
+--     let t ← (Language.toSnapshotTree snap.get).waitAll
+--     let _ ← t.bind
+
+--   let some snap := (← read).snap? | return
+--   let some snap := snap.old? | return
+--   Language.toSnapshotTree snap.val
+
+def runCleanups : CommandElab := fun stx => do
+  let cleanupss := (cleanupAttr.ext.toEnvExtension.getState (← getEnv)).importedEntries
+  let localCleanups := cleanupAttr.ext.getState (← getEnv)
+  -- `isEmpty` check worth it instead? or just let the loop run?
+  for cleanups in cleanupss do
+    for cleanup in cleanups do
+      let act ← unsafe evalConstCheck CommandElab ``CommandElab cleanup
+      act stx
+  for cleanup in localCleanups do
+    let act ← unsafe evalConstCheck CommandElab ``CommandElab cleanup
+    act stx
+
+  -- -- if we wanted to run all cleanups:
+  -- let mut errors := #[]
+  -- for cleanups in cleanupss do
+  --   for cleanup in cleanups do
+  --     let result := ((← getEnv).evalConstCheck CommandElab (← getOptions) ``CommandElab cleanup)
+  --     match result with
+  --     | .ok act => try act stx catch msg => errors := errors.push msg
+  --     | .error msg => errors := errors.push (.error stx msg)
+  -- for cleanup in localCleanups do
+  --   let result := ((← getEnv).evalConstCheck CommandElab (← getOptions) ``CommandElab cleanup)
+  --     match result with
+  --     | .ok act => act stx
+  --     | .error msg => errors := errors.push (.error stx msg)
+  -- for error in errors do
+  --   logErrorAt stx error.toMessageData
+
+
+@[command_elab eoi]
+def elabEoiToCleanups : CommandElab
+| stx@(.node _ ``Command.eoi _) => do
+  -- waitForAllTasks
+  runCleanups stx
+| _ => throwUnsupportedSyntax
