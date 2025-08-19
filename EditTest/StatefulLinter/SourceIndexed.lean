@@ -59,20 +59,40 @@ def VersionedLine.isValid (v : VersionedLine) (map : FileMap) : Bool :=
 /-- Data of type `α` indexed by a line in the source file. -/
 def SourceIndexedPHashMap (α) := PersistentHashMap VersionedLine α
 
+namespace SourceIndexedPHashMap
+
+variable {α} (data : SourceIndexedPHashMap α)
+
+def insertAt? (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
+    (hashWholeFile := false) : Option (SourceIndexedPHashMap α) :=
+  ref.getRange? canonicalOnly |>.map fun range =>
+    data.insert (range.toVersionedLine map hashWholeFile) a
+
+end SourceIndexedPHashMap
+
 def SourceIndexedList (α) := List (VersionedLine × α)
 
-def SourceIndexedList.insert {α} (a : α) (i : VersionedLine) :
+namespace SourceIndexedList
+
+def insert {α} (i : VersionedLine) (a : α) :
     SourceIndexedList α → SourceIndexedList α
   | [] => [(i, a)]
   | e :: l =>
     match compare i e.1 with
     | .gt => (i, a) :: e :: l
     | .eq => (i, a) :: l
-    | .lt => e :: SourceIndexedList.insert a i l
+    | .lt => e :: SourceIndexedList.insert i a l
+
+def insertAt? {α} (ref : Syntax) (map : FileMap) (a : α)
+    (data : SourceIndexedList α) (canonicalOnly := false)
+    (hashWholeFile := false) : Option (SourceIndexedList α) :=
+  ref.getRange? canonicalOnly |>.map fun range =>
+    data.insert (range.toVersionedLine map hashWholeFile) a
+
+end SourceIndexedList
 
 def SourceIndexedArray (α) := Array (Option (VersionedLine × α))
 
--- should we add a bit more padding? e.g. in multiples of 100?
 def Array.setPadNone {α} (arr : Array (Option α)) (i : Nat) (a : α) : Array (Option α) :=
   if h : i < arr.size then
     arr.set i a
@@ -94,22 +114,47 @@ theorem Array.setPadNone_lt_size : i < (arr.setPadNone i a).size := by simp; ome
 
 end setPadNone
 
-def SourceIndexedArray.insert {α} (a : α) (i : VersionedLine)
+namespace SourceIndexedArray
+
+def insert {α} (i : VersionedLine) (a : α)
     (arr : SourceIndexedArray α) : SourceIndexedArray α :=
   arr.setPadNone i.line (i, a)
 
-def SourceIndexedArray.pruneInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
+def insertAt? {α} (ref : Syntax) (map : FileMap) (a : α)
+    (data : SourceIndexedArray α) (canonicalOnly := false)
+    (hashWholeFile := false) : Option (SourceIndexedArray α) :=
+  ref.getRange? canonicalOnly |>.map fun range =>
+    data.insert (range.toVersionedLine map hashWholeFile) a
+
+def filterInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
     SourceIndexedArray α :=
   arr.map fun | va@(some (v,_)) => if v.isValid map then va else none | none => none
 
-namespace SourceIndexed
+def foldlOnValid {α} {β : Type v}
+    (f : β → α → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
+  arr.foldl (init := init) fun
+    | b, some (v,a) => if v.isValid map then f b a else b
+    | b, none => b
 
-variable {α} (data : SourceIndexedPHashMap α)
+def foldlOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
+    (f : β → α → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
+  arr.foldlM (init := init) fun
+    | b, some (v,a) => if v.isValid map then f b a else pure b
+    | b, none => pure b
 
-def insertAt (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
-    (hashWholeFile := false) : SourceIndexedPHashMap α :=
-  match ref.getRange? canonicalOnly with
-  | some range => data.insert (range.toVersionedLine map hashWholeFile) a
-  | none => data
+def foldrOnValid {α} {β : Type v}
+    (f : α → β → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
+  arr.foldr (init := init) fun
+    | some (v,a), b => if v.isValid map then f a b else b
+    | none, b => b
+
+def foldrOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
+    (f : α → β → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
+  arr.foldrM (init := init) fun
+    | some (v,a), b => if v.isValid map then f a b else pure b
+    | none, b => pure b
+
+end SourceIndexedArray
+
 
 -- Could have something which prunes all invalid data. However, this is largely unnecessary, as the
