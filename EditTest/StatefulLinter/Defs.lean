@@ -1,5 +1,6 @@
 import Lean
 import EditTest.StatefulLinter.SourceIndexed
+import EditTest.StatefulLinter.Reflike
 
 open Lean Elab Command
 
@@ -23,16 +24,17 @@ A linter which references some `IO.Ref` as a state during linting.
 
 Linters which are expected to run during interactive editing should use a state of type `SourceIndexed α`.
 -/
-structure StatefulLinter (β) where
+structure StatefulLinter (β) (Ref : Type → Type) [Reflike Ref] where
   /-- The initial state of the linter's state at initialization. -/
   mkInitialRefState : IO β := by exact (pure {})
   /-- The linter's `run`, taking in the `state : IO.Ref`. -/
-  run (state : IO.Ref β) : CommandElab
+  run (state : Ref β) : CommandElab
   /-- The name of the linter. -/
   name : Name := by exact decl_name%
 
 /-- Given some `IO.Ref` which the `StatefulLinter` should use as its state, create a regular `Linter`. -/
-def StatefulLinter.toLinter (linter : StatefulLinter α) (ref : IO.Ref α) : Linter where
+def StatefulLinter.toLinter {α Ref} [Reflike Ref] (linter : StatefulLinter α Ref)
+    (ref : Ref α) : Linter where
   run := linter.run ref
   name := linter.name
 
@@ -43,23 +45,24 @@ Usage:
 initialize fooState : IO.Ref ← addStatefulLinter linter
 ```
 -/
-def addStatefulLinter (linter : StatefulLinter α) : IO (IO.Ref α) := do
-  let data ← IO.mkRef <|← linter.mkInitialRefState
-  addLinter (linter.toLinter data)
+def addStatefulLinter {α Ref} [Reflike Ref] (linter : StatefulLinter α Ref) (addLinter := true) :
+    IO (Ref α) := do
+  let data ← Reflike.new <|← linter.mkInitialRefState
+  if addLinter then Command.addLinter (linter.toLinter data)
   return data
 
-structure PersistentStatefulLinter (α) (β) (σ) extends StatefulLinter β where
+structure PersistentStatefulLinter (α) (β) (σ) (Ref) [Reflike Ref] extends StatefulLinter β Ref where
   /-- The extension that stores the data. -/
   ext : PersistentEnvExtension α β σ -- Or should it be a Descr? After all, the `StatefulLinter` does not have its `IO.Ref`, but takes it in as an argument.
 
-structure PersistentStatefulLinterDescr (α) (β) (σ) extends PersistentEnvExtensionDescr α β σ, StatefulLinter β where
+structure PersistentStatefulLinterDescr (α) (β) (σ) (Ref) [Reflike Ref] extends
+    PersistentEnvExtensionDescr α β σ, StatefulLinter β Ref where
   cleanupName : Name := by exact (decl_name% ++ cleanup)
 
-def PersistentStatefulLinter.toCleanup {α β σ}
-    (r : IO.Ref β) (ext : PersistentEnvExtension α β σ) : CommandElab := fun _ => do
+def PersistentStatefulLinter.toCleanup {α β σ} {Ref} [Reflike Ref]
+    (r : Ref β) (ext : PersistentEnvExtension α β σ) : CommandElab := fun _ => do
   -- should we use modifyEnv?
-  setEnv <| ext.addEntry (← getEnv) (← r.get)
-
+  setEnv <| ext.addEntry (← getEnv) (← Reflike.get r)
 
 structure SimplePersistentStatefulLinterDescr (β) (α) where
   name                  : Name := by exact decl_name%
