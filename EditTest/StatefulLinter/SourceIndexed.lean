@@ -44,55 +44,84 @@ instance VersionedLine.instHashableByLine : Hashable VersionedLine where
 @[inline] def String.hashRange (s : String) (range : String.Range) : UInt64 :=
   (s.extract range.start range.stop).hash
 
-def String.Range.toVersionedLine (range : String.Range) (map : FileMap) (hashWholeFile := false) :
-    VersionedLine where
+inductive TrackingScope where
+| noninteractive
+| upToCommandEnd
+| upToCommandEndWithTrailing
+| wholeFile
+
+def String.Range.toVersionedLine (range : String.Range) (map : FileMap)
+    (scope : TrackingScope := .upToCommandEnd) : VersionedLine where
   line := (map.toPosition range.start).line
-  endPos := if hashWholeFile then none else range.stop
-  hash := if hashWholeFile then map.source.hash else map.source.hashRange ⟨0, range.stop⟩
+  endPos := match scope with
+    | .noninteractive => some 0
+    | .upToCommandEnd | .upToCommandEndWithTrailing => range.stop
+    | .wholeFile => none
+  hash := match scope with
+    | .noninteractive => 0
+    | .upToCommandEnd | .upToCommandEndWithTrailing => map.source.hashRange ⟨0, range.stop⟩
+    | .wholeFile => map.source.hash
+
+@[inline] def Lean.FileMap.computeHash (endPos : Option String.Pos) (map : FileMap) : UInt64 :=
+  if let some endPos := endPos then
+    if endPos = 0 then 0 else map.source.hashRange ⟨0, endPos⟩
+  else map.source.hash
 
 def VersionedLine.isValid (v : VersionedLine) (map : FileMap) : Bool :=
-  v.hash = if let some endPos := v.endPos then
-    map.source.hashRange ⟨0, endPos⟩ else map.source.hash
+  v.hash = map.computeHash v.endPos
+
+
+/-- Provides `insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α`.
+Just to make testing implementations easier. Likely not permanent. -/
+class IndexesSource (SourceIndexed : Type u → Type u) where
+  protected insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α
+  protected foldl {α : Type u} {β : Type v} (data : SourceIndexed α)
+    (f : β → VersionedLine → α → β) (init : β) : β
+
+def insertAt? {SourceIndexed} [IndexesSource SourceIndexed] (data : SourceIndexed α) (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
+    (scope : TrackingScope := .upToCommandEnd) :
+    Option (SourceIndexed α) :=
+  let range? := match scope with
+  | .noninteractive | .upToCommandEnd | .wholeFile => ref.getRange? canonicalOnly
+  | .upToCommandEndWithTrailing => ref.getRangeWithTrailing? canonicalOnly
+  range?.map fun range =>
+    IndexesSource.insert data (range.toVersionedLine map scope) a
+
+def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type v}
+    (data : SourceIndexed α)
+    (f : β → VersionedLine → α → β) (init : β) (map : FileMap) : β :=
+  IndexesSource.foldl data (init := init) fun b v a => if v.isValid map then f b v a else b
+
 
 /- We choose `PersistentHashMap`s because they are extensible and shareable. However, the number of entries is bounded by the number of lines in the file, and the hash of a natural number is the number itself. As such, a simple `List` might be okay. -/
 
 /-- Data of type `α` indexed by a line in the source file. -/
 def SourceIndexedPHashMap (α) := PersistentHashMap VersionedLine α
 
-namespace SourceIndexedPHashMap
+instance : IndexesSource SourceIndexedPHashMap := ⟨.insert, PersistentHashMap.foldl⟩
 
-variable {α} (data : SourceIndexedPHashMap α)
-
-def insertAt? (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
-    (hashWholeFile := false) : Option (SourceIndexedPHashMap α) :=
-  ref.getRange? canonicalOnly |>.map fun range =>
-    data.insert (range.toVersionedLine map hashWholeFile) a
-
-end SourceIndexedPHashMap
 
 def SourceIndexedList (α) := List (VersionedLine × α)
 
 namespace SourceIndexedList
 
-def insert {α} (i : VersionedLine) (a : α) :
-    SourceIndexedList α → SourceIndexedList α
+def insert {α} (data : SourceIndexedList α) (i : VersionedLine) (a : α) : SourceIndexedList α :=
+  match data with
   | [] => [(i, a)]
   | e :: l =>
     match compare i e.1 with
     | .gt => (i, a) :: e :: l
     | .eq => (i, a) :: l
-    | .lt => e :: SourceIndexedList.insert i a l
+    | .lt => e :: SourceIndexedList.insert l i a
 
-def insertAt? {α} (ref : Syntax) (map : FileMap) (a : α)
-    (data : SourceIndexedList α) (canonicalOnly := false)
-    (hashWholeFile := false) : Option (SourceIndexedList α) :=
-  ref.getRange? canonicalOnly |>.map fun range =>
-    data.insert (range.toVersionedLine map hashWholeFile) a
+instance : IndexesSource SourceIndexedList := ⟨insert,
+  fun l f init => l.foldl (init := init) fun acc (v, a) => f acc v a⟩
 
 end SourceIndexedList
 
 def SourceIndexedArray (α) := Array (Option (VersionedLine × α))
 
+-- TODO: Does this exist somewhere?
 def Array.setPadNone {α} (arr : Array (Option α)) (i : Nat) (a : α) : Array (Option α) :=
   if h : i < arr.size then
     arr.set i a
@@ -116,15 +145,15 @@ end setPadNone
 
 namespace SourceIndexedArray
 
-def insert {α} (i : VersionedLine) (a : α)
-    (arr : SourceIndexedArray α) : SourceIndexedArray α :=
+def insert {α} (arr : SourceIndexedArray α) (i : VersionedLine) (a : α)
+    : SourceIndexedArray α :=
   arr.setPadNone i.line (i, a)
 
-def insertAt? {α} (ref : Syntax) (map : FileMap) (a : α)
-    (data : SourceIndexedArray α) (canonicalOnly := false)
-    (hashWholeFile := false) : Option (SourceIndexedArray α) :=
-  ref.getRange? canonicalOnly |>.map fun range =>
-    data.insert (range.toVersionedLine map hashWholeFile) a
+instance : IndexesSource SourceIndexedArray where
+  insert := insert
+  foldl arr f init := arr.foldl (init := init) fun
+    | b, some (v,a) => f b v a
+    | b, none => b
 
 def filterInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
     SourceIndexedArray α :=
