@@ -44,21 +44,18 @@ instance VersionedLine.instHashableByLine : Hashable VersionedLine where
 @[inline] def String.hashRange (s : String) (range : String.Range) : UInt64 :=
   (s.extract range.start range.stop).hash
 
-inductive TrackingScope where
-| noninteractive
+inductive InteractiveTrackingScope where
 | upToCommandEnd
 | upToCommandEndWithTrailing
 | wholeFile
 
 def String.Range.toVersionedLine (range : String.Range) (map : FileMap)
-    (scope : TrackingScope := .upToCommandEnd) : VersionedLine where
+    (scope : Option InteractiveTrackingScope := some .upToCommandEnd) : VersionedLine where
   line := (map.toPosition range.start).line
-  endPos := match scope with
-    | .noninteractive => some 0
+  endPos := scope.elim (some 0) fun
     | .upToCommandEnd | .upToCommandEndWithTrailing => range.stop
     | .wholeFile => none
-  hash := match scope with
-    | .noninteractive => 0
+  hash := scope.elim 0 fun
     | .upToCommandEnd | .upToCommandEndWithTrailing => map.source.hashRange ⟨0, range.stop⟩
     | .wholeFile => map.source.hash
 
@@ -70,22 +67,35 @@ def String.Range.toVersionedLine (range : String.Range) (map : FileMap)
 def VersionedLine.isValid (v : VersionedLine) (map : FileMap) : Bool :=
   v.hash = map.computeHash v.endPos
 
+/-!
+# SourceIndexed
 
+API is implemented by `IndexesSource` for comparison. We'll probably settle on one.
+-/
+
+-- What about `for` vs. fold?
 /-- Provides `insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α`.
 Just to make testing implementations easier. Likely not permanent. -/
 class IndexesSource (SourceIndexed : Type u → Type u) where
   protected insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α
   protected foldl {α : Type u} {β : Type v} (data : SourceIndexed α)
     (f : β → VersionedLine → α → β) (init : β) : β
+  protected empty {α} : SourceIndexed α := by exact {}
+
+instance {SourceIndexed α} [IndexesSource SourceIndexed] : EmptyCollection (SourceIndexed α) :=
+  ⟨IndexesSource.empty⟩
+
+def _root_.Lean.Syntax.getVersionedLine? (ref : Syntax) (map : FileMap)
+    (scope? : Option InteractiveTrackingScope) (canonicalOnly := false) : Option VersionedLine :=
+  let range? := match scope? with
+  | none | some .upToCommandEnd | some .wholeFile => ref.getRange? canonicalOnly
+  | some .upToCommandEndWithTrailing => ref.getRangeWithTrailing? canonicalOnly
+  range?.map (·.toVersionedLine map scope?)
 
 def insertAt? {SourceIndexed} [IndexesSource SourceIndexed] (data : SourceIndexed α) (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
-    (scope : TrackingScope := .upToCommandEnd) :
+    (scope : Option InteractiveTrackingScope := some .upToCommandEnd) :
     Option (SourceIndexed α) :=
-  let range? := match scope with
-  | .noninteractive | .upToCommandEnd | .wholeFile => ref.getRange? canonicalOnly
-  | .upToCommandEndWithTrailing => ref.getRangeWithTrailing? canonicalOnly
-  range?.map fun range =>
-    IndexesSource.insert data (range.toVersionedLine map scope) a
+  ref.getVersionedLine? map scope canonicalOnly |>.map (IndexesSource.insert data · a)
 
 def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type v}
     (data : SourceIndexed α)
@@ -98,7 +108,9 @@ def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type v
 /-- Data of type `α` indexed by a line in the source file. -/
 def SourceIndexedPHashMap (α) := PersistentHashMap VersionedLine α
 
-instance : IndexesSource SourceIndexedPHashMap := ⟨.insert, PersistentHashMap.foldl⟩
+instance : IndexesSource SourceIndexedPHashMap where
+  insert := .insert
+  foldl := PersistentHashMap.foldl
 
 
 def SourceIndexedList (α) := List (VersionedLine × α)
@@ -114,8 +126,10 @@ def insert {α} (data : SourceIndexedList α) (i : VersionedLine) (a : α) : Sou
     | .eq => (i, a) :: l
     | .lt => e :: SourceIndexedList.insert l i a
 
-instance : IndexesSource SourceIndexedList := ⟨insert,
-  fun l f init => l.foldl (init := init) fun acc (v, a) => f acc v a⟩
+instance : IndexesSource SourceIndexedList where
+  insert := insert
+  foldl l f init := l.foldl (init := init) fun acc (v, a) => f acc v a
+  empty := []
 
 end SourceIndexedList
 
@@ -149,11 +163,14 @@ def insert {α} (arr : SourceIndexedArray α) (i : VersionedLine) (a : α)
     : SourceIndexedArray α :=
   arr.setPadNone i.line (i, a)
 
+-- `for` vs. `foldl`?
+-- what about `reduceOption` first? is there `reduceOptionMap` somewhere?
 instance : IndexesSource SourceIndexedArray where
   insert := insert
   foldl arr f init := arr.foldl (init := init) fun
     | b, some (v,a) => f b v a
     | b, none => b
+  empty := #[]
 
 def filterInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
     SourceIndexedArray α :=

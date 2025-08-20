@@ -77,12 +77,16 @@ structure SimplePersistentStatefulLinterDescr (β) (α) where
 
 -- Note that any option controlling the whole linter should also control the persistence.
 
-structure AccumulativeLinter (β) (α) where
+structure AccumulativeLinterDescr (β) (α) where
   /-- Records a value of type `β` for a given command (or not). -/
-  record : CommandElabM (Option β)
+  -- allow access to ref?
+  record : Syntax → CommandElabM (Option β)
   /-- At the end of the file, appends each recorded value to the exported state. -/
   append : Array α → VersionedLine × β → Array α
-  trackingScope : TrackingScope := .upToCommandEnd
+  /-- Note: a value of `noninteractive` here will -/
+  interactiveTrackingScope : InteractiveTrackingScope := .upToCommandEnd
+  statsFn : Array α → Format := fun arr =>
+    f!"Recording {arr.size} {if arr.size = 1 then "entry" else "entries"}"
   name : Name := by exact decl_name%
 
 def addAccumulativeLinter {α} (l : AccumulativeLinter α) : IO (IO.Ref (SourceIndexedArray α))
