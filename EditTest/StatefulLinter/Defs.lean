@@ -147,6 +147,27 @@ def AccumulativeLinter.toCleanup {β α SourceIndexed Ref}
     a.append arr (v, b)
   modifyEnv fun env => a.ext.addEntry env exported
 
+open Parser in
+/-- Initialize an accumulative linter, and register a cleanup function that persists the data. -/
+syntax (name := initializeAccumulativeLinter)
+  declModifiers "initialize_accumulative_linter "
+  (atomic(ident (Term.typeSpec)? ppSpace Term.leftArrow)) Term.doSeq : command
+
+
+macro_rules
+| `(initializeAccumulativeLinter|
+  $declModifiers:declModifiers initialize_accumulative_linter%$tk $id $[: $type?]? ← $doSeq) => do
+  let init ← if let some type := type? then
+      `(Parser.Command.«initialize»|
+        $declModifiers:declModifiers initialize%$tk $id:ident : AccumulativeLinter _ _ _ ← do show $type from do $doSeq)
+    else
+      `(Parser.Command.«initialize»|
+        $declModifiers:declModifiers initialize%$tk $id:ident : AccumulativeLinter _ _ _ ← $doSeq)
+  let cleanup ← withRef tk `(command|
+    @[cleanup] def $(mkIdentFrom id <| id.getId ++ `cleanup) : CommandElab :=
+      AccumulativeLinter.toCleanup $id)
+  pure <| mkNullNode #[init, cleanup]
+
 /-
 
 initialize myRef ← addStatefulLinter myStatefulLinter
