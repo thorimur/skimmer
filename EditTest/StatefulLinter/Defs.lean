@@ -92,16 +92,16 @@ structure AccumulativeLinterDescr (β) (α) where
 structure AccumulativeLinter (β) (α) (SourceIndexed) [IndexesSource SourceIndexed]
     (Ref : Type → Type) extends AccumulativeLinterDescr β α where
   ref : Ref (SourceIndexed β)
-  ext : PersistentEnvExtension α (VersionedLine × β) (Array α)
+  ext : PersistentEnvExtension α (Array α) (Array α)
 
 namespace AccumulativeLinterDescr
 
 def toPersistentEnvExtensionDescr {α β} (a : AccumulativeLinterDescr β α) :
-    PersistentEnvExtensionDescr α (VersionedLine × β) (Array α) where
+    PersistentEnvExtensionDescr α (Array α) (Array α) where
   name := a.name ++ `ext
   mkInitial := pure #[]
   addImportedFn _ := pure #[]
-  addEntryFn := a.append
+  addEntryFn _ new := new -- ignore prior state, since this is only called once
   exportEntriesFnEx _ a _ := a -- allow oleanlevel-dependent behavior?
   statsFn := a.statsFn
   asyncMode := .sync
@@ -143,15 +143,9 @@ def AccumulativeLinter.toCleanup {β α SourceIndexed Ref}
     (a : AccumulativeLinter β α SourceIndexed Ref) : CommandElab := fun _ => do
   -- should we use modifyEnv or setEnv?
   let recorded ← Reflike.get a.ref
-  modifyEnv fun env =>
-    IndexesSource.foldl recorded (init := env) fun env v b =>
-      a.ext.addEntry env (v, b)
-
-
--- initialize_accumulative_linter
-
-
--- def addAccumulativeLinter {α} (l : AccumulativeLinter α) : IO (IO.Ref (SourceIndexedArray α))
+  let exported := IndexesSource.foldl recorded (init := #[]) fun arr v b =>
+    a.append arr (v, b)
+  modifyEnv fun env => a.ext.addEntry env exported
 
 /-
 
