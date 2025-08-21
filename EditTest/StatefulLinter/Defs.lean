@@ -164,7 +164,7 @@ macro_rules
       `(Parser.Command.«initialize»|
         $declModifiers:declModifiers initialize%$tk $id:ident : AccumulativeLinter _ _ _ ← $doSeq)
   let cleanup ← withRef tk `(command|
-    @[cleanup] def $(mkIdentFrom id <| id.getId ++ `cleanup) : CommandElab :=
+    @[cleanup] def $(mkIdentFrom id <| id.getId ++ `cleanup) : Lean.Elab.Command.CommandElab :=
       AccumulativeLinter.toCleanup $id)
   pure <| mkNullNode #[init, cleanup]
 
