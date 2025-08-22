@@ -107,8 +107,8 @@ def toPersistentEnvExtensionDescr {α β} (a : AccumulativeLinterDescr β α) :
   asyncMode := .sync
   replay? := none
 
-elab "#in_server" : command => do
-  logInfo m!"{← getBoolOption Elab.inServer.name Elab.inServer.defValue}"
+-- elab "#in_server" : command => do
+--   logInfo m!"{← getBoolOption Elab.inServer.name Elab.inServer.defValue}"
 
 def getTrackingScope {β α} {m : Type → Type} [Monad m] [MonadOptions m]
     (a : AccumulativeLinterDescr β α) : m (Option InteractiveTrackingScope) := do
