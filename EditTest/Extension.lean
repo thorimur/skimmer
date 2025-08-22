@@ -1,4 +1,4 @@
-import EditTest.Defs
+import EditTest.Edit
 
 open Lean
 
