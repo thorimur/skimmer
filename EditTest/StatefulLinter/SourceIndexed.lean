@@ -44,6 +44,7 @@ instance VersionedLine.instHashableByLine : Hashable VersionedLine where
 @[inline] def String.hashRange (s : String) (range : String.Range) : UInt64 :=
   (s.extract range.start range.stop).hash
 
+/-- The region that an interactive linter is "sensitive" to. Note that we do not, by default, do any validity checking *before* adding data. This must be managed by the linter. -/
 inductive InteractiveTrackingScope where
 | upToCommandEnd
 | upToCommandEndWithTrailing
@@ -77,6 +78,8 @@ API is implemented by `IndexesSource` for comparison. We'll probably settle on o
 /-- Provides `insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α`.
 Just to make testing implementations easier. Likely not permanent. -/
 class IndexesSource (SourceIndexed : Type u → Type u) where
+  -- Should return `some` even if the `VersionedLine` provided is not valid.
+  protected getEntry? {α : Type u} : SourceIndexed α → VersionedLine → Option (VersionedLine × α)
   protected insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α
   protected foldl {α : Type u} {β : Type v} (data : SourceIndexed α)
     (f : β → VersionedLine → α → β) (init : β) : β
@@ -86,11 +89,22 @@ instance {SourceIndexed α} [IndexesSource SourceIndexed] : EmptyCollection (Sou
   ⟨IndexesSource.empty⟩
 
 def _root_.Lean.Syntax.getVersionedLine? (ref : Syntax) (map : FileMap)
-    (scope? : Option InteractiveTrackingScope) (canonicalOnly := false) : Option VersionedLine :=
-  let range? := match scope? with
+    (scope : Option InteractiveTrackingScope) (canonicalOnly := false) : Option VersionedLine :=
+  let range? := match scope with
   | none | some .upToCommandEnd | some .wholeFile => ref.getRange? canonicalOnly
   | some .upToCommandEndWithTrailing => ref.getRangeWithTrailing? canonicalOnly
-  range?.map (·.toVersionedLine map scope?)
+  range?.map (·.toVersionedLine map scope)
+
+def Lean.Syntax.hasValidData {m : Type → Type} [Monad m] [MonadFileMap m] {SourceIndexed}
+    [IndexesSource SourceIndexed]
+    (ref : Syntax) (state : SourceIndexed α)
+    (canonicalOnly := false) : m Bool := do
+  let map ← getFileMap
+  -- We use `none` here because any `IndexesSource` implementation should not `get` differently based on the hash/endPos.
+  let some l := ref.getVersionedLine? map none canonicalOnly | return false
+  let some (l,_) := IndexesSource.getEntry? state l | return false
+  return l.isValid map
+
 
 def insertAt? {SourceIndexed} [IndexesSource SourceIndexed] (data : SourceIndexed α) (ref : Syntax) (map : FileMap) (a : α) (canonicalOnly := false)
     (scope : Option InteractiveTrackingScope := some .upToCommandEnd) :
@@ -109,6 +123,7 @@ def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type v
 def SourceIndexedPHashMap (α) := PersistentHashMap VersionedLine α
 
 instance : IndexesSource SourceIndexedPHashMap where
+  getEntry? := PersistentHashMap.findEntry?
   insert := .insert
   foldl := PersistentHashMap.foldl
 
@@ -126,8 +141,12 @@ def insert {α} (data : SourceIndexedList α) (i : VersionedLine) (a : α) : Sou
     | .eq => (i, a) :: l
     | .lt => e :: SourceIndexedList.insert l i a
 
+def getEntry? {α} (data : SourceIndexedList α) (i : VersionedLine) : Option (VersionedLine × α) :=
+  data.find? (·.1 == i)
+
 instance : IndexesSource SourceIndexedList where
-  insert := insert
+  getEntry?
+  insert
   foldl l f init := l.foldl (init := init) fun acc (v, a) => f acc v a
   empty := []
 
@@ -163,9 +182,13 @@ def insert {α} (arr : SourceIndexedArray α) (i : VersionedLine) (a : α)
     : SourceIndexedArray α :=
   arr.setPadNone i.line (i, a)
 
+def getEntry? {α} (data : SourceIndexedArray α) (i : VersionedLine) : Option (VersionedLine × α) :=
+  (show Array _ from data)[i.line]?.join
+
 -- `for` vs. `foldl`?
 -- what about `reduceOption` first? is there `reduceOptionMap` somewhere?
 instance : IndexesSource SourceIndexedArray where
+  getEntry? := getEntry?
   insert := insert
   foldl arr f init := arr.foldl (init := init) fun
     | b, some (v,a) => f b v a
