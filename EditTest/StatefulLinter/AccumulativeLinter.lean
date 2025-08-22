@@ -2,7 +2,7 @@ import EditTest.StatefulLinter.Add
 
 open Lean Elab Command
 
-structure AccumulativeLinterDescr (β) (α) where
+structure AccumulativeLinterDescr (β) (α) (αExported := α) where
   /-- Records a value of type `β` for a given command (or not). -/
   -- allow access to ref?
   record : Syntax → CommandElabM (Option β)
@@ -11,41 +11,45 @@ structure AccumulativeLinterDescr (β) (α) where
   /-- When used interactively, determines scope. -/
   interactiveTrackingScope : InteractiveTrackingScope := .upToCommandEnd
   statsFn : Array α → Format := fun arr =>
-    f!"Recording {arr.size} {if arr.size = 1 then "entry" else "entries"}"
+    f!"Recorded {arr.size} {if arr.size = 1 then "entry" else "entries"}"
+  exportEntriesFnEx : Environment → Array α → OLeanLevel → Array αExported :=
+    by exact fun _ a _ => a
   name : Name := by exact decl_name%
 
-structure AccumulativeLinter (β) (α) (SourceIndexed) [IndexesSource SourceIndexed]
-    (Ref : Type → Type) extends AccumulativeLinterDescr β α where
+structure AccumulativeLinter (β) (α) (αExported) (SourceIndexed) [IndexesSource SourceIndexed]
+    (Ref : Type → Type) extends AccumulativeLinterDescr β α αExported where
   ref : Ref (SourceIndexed β)
-  ext : PersistentEnvExtension α (Array α) (Array α)
+  ext : PersistentEnvExtension αExported (Array α) (Array α)
 
 namespace AccumulativeLinterDescr
 
-def toPersistentEnvExtensionDescr {α β} (a : AccumulativeLinterDescr β α) :
-    PersistentEnvExtensionDescr α (Array α) (Array α) where
+def toPersistentEnvExtensionDescr {αExported α β} (a : AccumulativeLinterDescr β α αExported) :
+    PersistentEnvExtensionDescr αExported (Array α) (Array α) where
   name := a.name ++ `ext
   mkInitial := pure #[]
   addImportedFn _ := pure #[]
-  addEntryFn _ new := new -- ignore prior state, since this is only called once
-  exportEntriesFnEx _ a _ := a -- allow oleanlevel-dependent behavior?
+  addEntryFn := Array.append -- allows us to add to the state
+  exportEntriesFnEx := a.exportEntriesFnEx -- allow oleanlevel-dependent behavior?
   statsFn := a.statsFn
   asyncMode := .sync
   replay? := none
 
+
+
 -- elab "#in_server" : command => do
 --   logInfo m!"{← getBoolOption Elab.inServer.name Elab.inServer.defValue}"
 
-def getTrackingScope {β α} {m : Type → Type} [Monad m] [MonadOptions m]
-    (a : AccumulativeLinterDescr β α) : m (Option InteractiveTrackingScope) := do
+def getTrackingScope {αExported β α} {m : Type → Type} [Monad m] [MonadOptions m]
+    (a : AccumulativeLinterDescr β α αExported) : m (Option InteractiveTrackingScope) := do
   if ← getBoolOption Elab.inServer.name Elab.inServer.defValue then
     return some a.interactiveTrackingScope
   else
     return none
 
 def toStatefulLinter
-    (Ref : Type → Type) [Reflike Ref] {α β}
+    (Ref : Type → Type) [Reflike Ref] {αExported α β}
     (SourceIndexed) [IndexesSource SourceIndexed]
-    (a : AccumulativeLinterDescr β α) : StatefulLinter (SourceIndexed β) Ref where
+    (a : AccumulativeLinterDescr β α αExported) : StatefulLinter (SourceIndexed β) Ref where
   run r stx := do
     let some b ← a.record stx | return
     let some vline := stx.getVersionedLine? (← getFileMap) (← a.getTrackingScope)
@@ -55,17 +59,17 @@ def toStatefulLinter
 
 end AccumulativeLinterDescr
 
-def addAccumulativeLinter {α β} (a : AccumulativeLinterDescr β α)
+def addAccumulativeLinter {αExported α β} (a : AccumulativeLinterDescr β α αExported)
     (Ref : Type → Type) [Reflike Ref]
     (SourceIndexed := SourceIndexedArray) [IndexesSource SourceIndexed] (addLinter := true) :
-    IO (AccumulativeLinter β α SourceIndexed Ref) := do
+    IO (AccumulativeLinter β α αExported SourceIndexed Ref) := do
   let ref ← addStatefulLinter (addLinter := addLinter) <| a.toStatefulLinter Ref SourceIndexed
   let ext ← registerPersistentEnvExtension a.toPersistentEnvExtensionDescr
   return { a with ref, ext }
 
-def AccumulativeLinter.toCleanup {β α SourceIndexed Ref}
+@[inline] def AccumulativeLinter.toCleanup {β α SourceIndexed Ref}
     [IndexesSource SourceIndexed] [Reflike Ref]
-    (a : AccumulativeLinter β α SourceIndexed Ref) : CommandElab := fun _ => do
+    (a : AccumulativeLinter β α αExported SourceIndexed Ref) : CommandElab := fun _ => do
   -- should we use modifyEnv or setEnv?
   let recorded ← Reflike.get a.ref
   let exported := IndexesSource.foldl recorded (init := #[]) fun arr v b =>
