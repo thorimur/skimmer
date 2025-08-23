@@ -12,6 +12,7 @@ TODO: make this scoped
 
 open Lean Meta Elab Command
 
+-- TODO: seems like the wrong sort of thing, since we're always gathering them. Not that many, so maybe we should use an imported fn Either a different kind of attributeMaybe a ref, like `addLinter` modifies?
 initialize cleanupAttr : TagAttribute ← (registerTagAttribute
   `cleanup
   "Cleanup declarations which are run at the end of each file."
