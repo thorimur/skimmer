@@ -75,17 +75,20 @@ API is implemented by `IndexesSource` for comparison. We'll probably settle on o
 -/
 
 -- What about `for` vs. fold?
-/-- Provides `insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α`.
+/-- Provides `insert {α : Type} : SourceIndexed α → VersionedLine → α → SourceIndexed α`.
 Just to make testing implementations easier. Likely not permanent. -/
-class IndexesSource (SourceIndexed : Type u → Type u) where
+class IndexesSource (SourceIndexed : Type → Type) where
   -- Should return `some` even if the `VersionedLine` provided is not valid.
-  protected getEntry? {α : Type u} : SourceIndexed α → VersionedLine → Option (VersionedLine × α)
-  protected insert {α : Type u} : SourceIndexed α → VersionedLine → α → SourceIndexed α
-  protected foldl {α : Type u} {β : Type v} (data : SourceIndexed α)
+  protected getEntry? {α : Type} : SourceIndexed α → VersionedLine → Option (VersionedLine × α)
+  protected insert {α : Type} : SourceIndexed α → VersionedLine → α → SourceIndexed α
+  protected foldl {α : Type} {β : Type} (data : SourceIndexed α)
     (f : β → VersionedLine → α → β) (init : β) : β
   protected empty {α} : SourceIndexed α := by exact {}
 
 instance {SourceIndexed α} [IndexesSource SourceIndexed] : EmptyCollection (SourceIndexed α) :=
+  ⟨IndexesSource.empty⟩
+
+instance {α} {SourceIndexed} [IndexesSource SourceIndexed] : Inhabited (SourceIndexed α) :=
   ⟨IndexesSource.empty⟩
 
 def _root_.Lean.Syntax.getVersionedLine? (ref : Syntax) (map : FileMap)
@@ -111,7 +114,7 @@ def insertAt? {SourceIndexed} [IndexesSource SourceIndexed] (data : SourceIndexe
     Option (SourceIndexed α) :=
   ref.getVersionedLine? map scope canonicalOnly |>.map (IndexesSource.insert data · a)
 
-def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type v}
+def foldlOnValid {α} {SourceIndexed} [IndexesSource SourceIndexed] {β : Type}
     (data : SourceIndexed α)
     (f : β → VersionedLine → α → β) (init : β) (map : FileMap) : β :=
   IndexesSource.foldl data (init := init) fun b v a => if v.isValid map then f b v a else b
