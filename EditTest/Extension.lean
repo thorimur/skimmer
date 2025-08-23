@@ -1,5 +1,5 @@
 import EditTest.Edit
-import EditTEst.AttrUtil
+import EditTest.AttrUtil
 
 open Lean
 

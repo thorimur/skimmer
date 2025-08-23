@@ -208,9 +208,9 @@ elab "#test" doc:docComment : command => do
     logInfo m!"{newMap.getLineContents firstLine lastLine}"
 
 
-#test
-      /-- The sum of `f y` over `y ∈ g '' s` equals the sum of `f (g i)` over `s` provided that
-          `g` is injective on `s ∩ support (f ∘ g)`. -/
+-- #test
+      -- /-- The sum of `f y` over `y ∈ g '' s` equals the sum of `f (g i)` over `s` provided that
+      --     `g` is injective on `s ∩ support (f ∘ g)`. -/
 
 
 -- /-- Treats `s` as a single line (assuming that the newline is at the end) and so only dedents the first line. Does not check that `s` is a single line. -/
@@ -226,10 +226,10 @@ elab "#test" doc:docComment : command => do
 
 
 
-#eval Id.run do
-  let s := "  argawg\n\n  brgaerg\n\n\n    gaerg. \n-/"
-  let some edits := s.dedents? 1 | return "oops"
-  applyEdits s edits
+-- #eval Id.run do
+--   let s := "  argawg\n\n  brgaerg\n\n\n    gaerg. \n-/"
+--   let some edits := s.dedents? 1 | return "oops"
+--   applyEdits s edits
   /-
     4
 
