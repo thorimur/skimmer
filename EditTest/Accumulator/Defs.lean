@@ -7,6 +7,22 @@ We want to decouple the state from StatefulLinter, which is not that useful, I t
 Instead, we want a ref + extension + cleanup setup, then a toLinter thing.
 
 If we use a ref for cleanups instead of an attribute, we can use `addCleanup` like `addLinter`
+----
+Hmm, we clearly want to be able to reuse an extension for another accumulator.
+Would be cool to keep records of all of the cleanups which feed into the accumulator; need log options for the accumulator.
+
+Makes you wonder if we can directly piggyback? or if we want to be able to define the extension independently easily. let you take apart the parts how you want.
+
+Also need appropriate set_options.
+---
+After some thought:
+
+- The base is the extension.
+- Just above it is the cleanup function. This ought to be an implementation detail/boilerplate, at least.
+- The Refs live above the extension and are connected to it by the cleanup. We can consolidate and have multiple linters use a single ref, or have a ref for each linter.
+We
+- The linters live above that. We can have multiple linters use the same ref—but *only* if we can add a name indexing somehow. E.g. `SourceAndLinterIndexed`. Yikes!
+- So, because of line-indexing, one command per line (hey...is that true? uh oh! it's not! SCREAM! okay, we just need to add a startPos, I suppose...? This means that `SourceIndexedArray` needs a revamp. we need to have `List`s or `Array`s of entries in each spot. Does that defeat the point? Hey, this complicates things further, because now it's about overlapping ranges. If you're on the same line, you can destroy anything which overlaps with you. But maybe we should go with "destroy anything you overlap with" anyway. Maybe we should ignore source indexing and just insist that we only run it noninteractively first. That sounds reasonable...
 -/
 
 /-
@@ -16,6 +32,8 @@ initialize foo : Accumulator ← registerAccumulator accDescr
 
 initialize addLinter foo.toLinter
 -/
+
+#check 3  #check 5
 
 open Lean Elab Command
 
@@ -30,7 +48,7 @@ structure AccumulatorDescr (β) (α) (SourceIndexed) (Ref)
   /-- When used interactively, determines scope. -/
   interactiveTrackingScope : InteractiveTrackingScope := .upToCommandEnd
   statsFn : Array α → Format := fun arr =>
-    f!"Recorded {arr.size} {if arr.size = 1 then "entry" else "entries"}"
+    f!"Accumulator '{name}':\nRecorded {arr.size} {if arr.size = 1 then "entry" else "entries"}"
   exportEntriesFnEx : Environment → Array α → OLeanLevel → Array αExported :=
     by exact fun _ a _ => a
   -- Should we have `cleanup : Ref (SourceIndexed β) → PersistentEnvExtension _ _ _ → COmmandElab` with a default? or `customCleanup? : Option ..`? or just let it be defined at the boilerplate level
@@ -39,6 +57,26 @@ structure Accumulator (β) (α) (αExported) (SourceIndexed)
     (Ref : Type → Type) [IndexesSource SourceIndexed] [Reflike Ref] extends AccumulatorDescr β α SourceIndexed Ref αExported where
   ref : Ref (SourceIndexed β)
   ext : PersistentEnvExtension αExported (Array α) (Array α)
+
+
+instance [Reflike Ref] [IndexesSource SourceIndexed] [Inhabited <| Ref (SourceIndexed β)] : Inhabited <| Accumulator (β) (α) (αExported) (SourceIndexed)
+    (Ref : Type → Type) := ⟨{
+      recordInLinter? := default
+      append := default
+      ref := default
+      ext := default
+      exportEntriesFnEx := default
+    }⟩
+
+instance [Reflike Ref] [IndexesSource SourceIndexed]
+    [i : Nonempty <| Ref (SourceIndexed β)] : Nonempty <| Accumulator (β) (α) (αExported) (SourceIndexed)
+    (Ref : Type → Type) := ⟨{
+      recordInLinter? := default
+      append := default
+      ref := Classical.choice i
+      ext := default
+      exportEntriesFnEx := default
+    }⟩
 
 namespace AccumulatorDescr
 
