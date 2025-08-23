@@ -1,4 +1,5 @@
 import Lean
+import EditTest.AttrUtil
 
 /-!
 # Cleanup functionality
@@ -17,15 +18,5 @@ initialize cleanupAttr : TagAttribute ← (registerTagAttribute
   `cleanup
   "Cleanup declarations which are run at the end of each file."
   (applicationTime := .afterCompilation)
-  (fun decl => do
-    let d ← getAsyncConstInfo decl (skipRealize := true)
-    let { type .. } := d.sig.get
-    unless type == Expr.const ``CommandElab [] do
-      throwError "Expected type to be exactly\
-        {indentD <| Expr.const ``CommandElab []}\ni.e. `Syntax → CommandElabM Unit`, got\
-        {indentD type}"
-    let some val := d.constInfo.get.value? | throwError "`{decl}` has no value"
-    if type.hasSorry || val.hasSorry then
-      throwError "`{decl}` uses `sorry`"
-  )
+  (validateHasExactlyTypeNoSorry <| mkConst ``CommandElab)
 )

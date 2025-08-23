@@ -2,8 +2,8 @@ import EditTest.Cleanup.Attr
 
 open Lean Elab Command Parser
 
-#check Language.DynamicSnapshot
-#check Language.SnapshotTree.waitAll
+-- #check Language.DynamicSnapshot
+-- #check Language.SnapshotTree.waitAll
 
 -- def Lean.Elab.Command.waitForAllTasks : CommandElabM Unit := do
 --   for snap in (← get).snapshotTasks do
@@ -14,8 +14,9 @@ open Lean Elab Command Parser
 --   let some snap := snap.old? | return
 --   Language.toSnapshotTree snap.val
 
+-- use scoped, erased, etc.
 def runCleanups : CommandElab := fun stx => do
-  let cleanupss := (cleanupAttr.ext.toEnvExtension.getState (← getEnv)).importedEntries
+  let cleanupss := cleanupAttr.ext.getImportedEntries (← getEnv)
   let localCleanups := cleanupAttr.ext.getState (← getEnv)
   -- `isEmpty` check worth it instead? or just let the loop run?
   for cleanups in cleanupss do

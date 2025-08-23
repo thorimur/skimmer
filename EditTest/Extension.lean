@@ -1,4 +1,5 @@
 import EditTest.Edit
+import EditTEst.AttrUtil
 
 open Lean
 
@@ -36,7 +37,7 @@ def getDirOfModule (sp : SearchPath) (mod : Name) : IO System.FilePath := do
 
 def executeEdits (env : Environment) (root : Name) : IO Unit := do
   let sourceDir ← getDirOfModule (← getSrcSearchPath) root
-  let editss := (editExt.toEnvExtension.getState env).importedEntries
+  let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
     let edits := editss[idx]
     unless edits.isEmpty do
@@ -52,7 +53,7 @@ def executeEdits (env : Environment) (root : Name) : IO Unit := do
 def showEdits (env : Environment) (root : Name) : IO Unit := do
   -- let base ← Mathlib.getPackageDir "Mathlib"
   let sourceDir ← getDirOfModule (← getSrcSearchPath) `EditTest
-  let editss := (editExt.toEnvExtension.getState env).importedEntries
+  let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
     let edits := editss[idx]
     unless edits.isEmpty do
