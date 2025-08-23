@@ -135,13 +135,3 @@ macro_rules -- TODO (WIP)
     @[cleanup] def $(mkIdentFrom id <| id.getId ++ `cleanup) : Lean.Elab.Command.CommandElab :=
       AccumulativeLinter.toCleanup $id)
   pure <| mkNullNode #[init, addLinter, cleanup]
-
-/-
-
-initialize myRef ← addStatefulLinter myStatefulLinter
-initialize myExt ← registerPersistentEnvExtension myPersistentEnvExtensionDescr
-
-@[cleanup]
-def myLinter.cleanup : CommandElab := toCleanup myRef myExt
-
--/
