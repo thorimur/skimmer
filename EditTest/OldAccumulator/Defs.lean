@@ -33,8 +33,6 @@ initialize foo : Accumulator ← registerAccumulator accDescr
 initialize addLinter foo.toLinter
 -/
 
-#check 3  #check 5
-
 open Lean Elab Command
 
 structure AccumulatorDescr (β) (α) (SourceIndexed) (Ref)
