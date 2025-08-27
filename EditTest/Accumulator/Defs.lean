@@ -44,8 +44,8 @@ structure Accumulator (ρ) (α β σ) (Ref) [Reflike Ref] where
   ext : PersistentEnvExtension α β σ
   /-- Incorporate the final state of the ref into the state of the environment extension; like `addEntryFn`, but is only expected to be run once, by the associated cleanup.
 
-  TODO: rename, signaling the fact that this will run once at the end. -/
-  incorporate : σ → ρ → σ -- monadic?
+  TODO: rename, signaling the fact that this will run once at the end. `sendOff`? `submit`? -/
+  incorporate : σ → ρ → σ
 
 
 abbrev SimpleAccumulatorExtension (α) := PersistentEnvExtension α (Array α) (Array α)
