@@ -177,6 +177,7 @@ Once we have the start of the first command, we can employ a couple different st
   - (Assuming each command is elaborated only once) Each linter adds the size of a range to a counter. The cleanup checks when the size reaches its position, and waits in between.
     - If not, we can have an auxiliary hash set with ranges to see if we've elaborated it before. Note we'd want to decrement the counter as soon as we see a range again, so we know to wait ASAP. Not perfect.
   - We insert the range into an RBTree. The cleanup checks if the tree is contiguous up to its position.
+  - Have a structure which tracks both gaps and contiguous ranges, marked as such. We want it to be (1) quick to insert new ranges (2) quick to know when there are any gaps up to our cleanup posiiton. Interactively (3) we want to obliterate stale overlapping ranges and easily (4) check for validity of the ranges.
 - **Interactive**:
   - We insert hashed(?) .start/.stop positions into an RBTree. We obliterate things in between in real time.
   - We have some sort of "contiguous block structure/tree" which caches the range of the contiguity at the node for quick checking by the cleanup.
