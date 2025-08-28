@@ -161,6 +161,47 @@ instance : IndexesSource SourceIndexedList where
 
 end SourceIndexedList
 
+section Contiguity
+
+/-!
+# Contiguity of commands
+
+Since we cannot wait for all commands, we need a way of determining if every command has been linted. We should probably include a timeout just in case.
+
+There are a couple approaches we could take here. We'll start noninteractively.
+
+We'll assume that commands are disjoint and contiguous, but TODO: see where parsing actually starts.
+
+Once we have the start of the first command, we can employ a couple different strategies, depending on what invariants we have.
+- **Noninteractive**:
+  - (Assuming each command is elaborated only once) Each linter adds the size of a range to a counter. The cleanup checks when the size reaches its position, and waits in between.
+    - If not, we can have an auxiliary hash set with ranges to see if we've elaborated it before. Note we'd want to decrement the counter as soon as we see a range again, so we know to wait ASAP. Not perfect.
+  - We insert the range into an RBTree. The cleanup checks if the tree is contiguous up to its position.
+- **Interactive**:
+  - We insert hashed(?) .start/.stop positions into an RBTree. We obliterate things in between in real time.
+  - We have some sort of "contiguous block structure/tree" which caches the range of the contiguity at the node for quick checking by the cleanup.
+-/
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def SourceIndexedArray (α) := Array (Option (VersionedRange × α))
 
 -- TODO: Does this exist somewhere?
