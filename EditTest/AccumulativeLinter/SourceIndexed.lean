@@ -178,9 +178,12 @@ Once we have the start of the first command, we can employ a couple different st
     - If not, we can have an auxiliary hash set with ranges to see if we've elaborated it before. Note we'd want to decrement the counter as soon as we see a range again, so we know to wait ASAP. Not perfect.
   - We insert the range into an RBTree. The cleanup checks if the tree is contiguous up to its position.
   - Have a structure which tracks both gaps and contiguous ranges, marked as such. We want it to be (1) quick to insert new ranges (2) quick to know when there are any gaps up to our cleanup posiiton. Interactively (3) we want to obliterate stale overlapping ranges and easily (4) check for validity of the ranges.
+  - A little 1D algebraic topology: conceptualize the start points as -p and the stop points as +p. Gluing a new range means adding -p₀ + p₁ to the boundary of the overall shape. Our operations are `get?` and `erase?`. We might actually want to unlinearize a little and store stop points in one set and start points in another; stop points erase from the start set else add to the stop set, and vice versa. If every command only gets elaborated once, we can combine our start and stop sets and work in ℤ₂. However, we should also keep a running total of the number of points, positive or negative. We can just check if the number of points is 2, and if 0 is in the set and the endPos is in the set. Else, wait. This doesn't work at all for interactivity, unfortunately.
 - **Interactive**:
   - We insert hashed(?) .start/.stop positions into an RBTree. We obliterate things in between in real time.
   - We have some sort of "contiguous block structure/tree" which caches the range of the contiguity at the node for quick checking by the cleanup.
+  - There's a chance that `SourceIndexedList` is fine.
+  - We can have an `Array` whose indices refer to blocks of positions of some size[Copilot:, and each entry is a `List` of ranges in that block. We can cache the contiguity of each block, and the cleanup can check the blocks up to its position.] Can we iterate this idea and have multiple stages of blocks? I'm wondering what happens when things are in different blocks. It might be easy to invalidate whole blocks at once in a tree-like setup.
 -/
 
 
