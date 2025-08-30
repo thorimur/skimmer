@@ -184,9 +184,47 @@ Once we have the start of the first command, we can employ a couple different st
   - We have some sort of "contiguous block structure/tree" which caches the range of the contiguity at the node for quick checking by the cleanup.
   - There's a chance that `SourceIndexedList` is fine.
   - We can have an `Array` whose indices refer to blocks of positions of some size[Copilot:, and each entry is a `List` of ranges in that block. We can cache the contiguity of each block, and the cleanup can check the blocks up to its position.] Can we iterate this idea and have multiple stages of blocks? I'm wondering what happens when things are in different blocks. It might be easy to invalidate whole blocks at once in a tree-like setup.
+
+Note that the `eoi` token has weird position info: `⟨startPos, 0⟩`. We should check for this in the accumulative linter infrastructure, or possibly ask for eoi to be handled separately anyway
+
+Or, we could add `⟨0,headerEndPos⟩` to the set at the start of the cleanup, then just check for it to have 0 elements. I like that. Means no special handling! Should have a test that internals for `eoi` don't change though. Or: just handle the insertion of eoi separately, and ensure that we use the "weird" version. After all, the "real" version doesn't make sense--we'd have to ensure the eoi token was captured anyway.
+
+We also manually run the linter in question on the eoi token, since otherwise it runs after. All the more reason for it to not *actually* run on the eoi token, but be a separate thing the cleanup calls.
 -/
 
 
+namespace Noninteractive
+
+def RangeBoundariesMod2 := Std.HashSet String.Pos
+
+namespace RangeBoundariesMod2
+
+def insertMod2 (m : RangeBoundariesMod2) (k : String.Pos) : RangeBoundariesMod2 :=
+  if m.contains k then m.erase k else m.insert k
+
+def insertRange (m : RangeBoundariesMod2) (r : String.Range) : RangeBoundariesMod2 :=
+  m.insertMod2 r.start |>.insertMod2 r.stop
+
+def isRange (m : RangeBoundariesMod2) (start stop : String.Pos) : Bool :=
+  m.size = 2 && m.contains start && m.contains
+
+@[inline] def isCycle (m : RangeBoundariesMod2) : Bool :=
+  m.size = 0
+
+end RangeBoundariesMod2
+
+/-- Assumes that the linter has already run on the eoi token--specifically, the cleanup should have manually run it. -/
+def waitForAllCommands (rangeRef : IO.Ref RangeBoundariesMod2) (name : Name) (sleep : UInt32 := 500) (numSleeps : Nat := 1000) : CommandElabM Unit :=
+match numSleeps with
+| 0 => logWarning m!"{name}: Timed out waiting for all commands to be linted"
+| numSleeps+1  => do
+  unless (← rangeRef.get).isCycle do
+    _ ← IO.sleep sleep
+    waitForAllCommands rangeRef name sleep numSleeps
+
+end Noninteractive
+
+end Contiguity
 
 
 
