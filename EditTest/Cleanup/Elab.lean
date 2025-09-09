@@ -47,6 +47,7 @@ def runCleanups : CommandElab := fun stx => do
 @[command_elab eoi]
 def elabEoiToCleanups : CommandElab
 | stx@(.node _ ``Command.eoi _) => do
-  -- waitForAllTasks
+  -- Wait for main environment branch; this does not account for linters.
+  let _ := (← getEnv).checked.get
   runCleanups stx
 | _ => throwUnsupportedSyntax

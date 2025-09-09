@@ -185,7 +185,7 @@ Once we have the start of the first command, we can employ a couple different st
   - There's a chance that `SourceIndexedList` is fine.
   - We can have an `Array` whose indices refer to blocks of positions of some size[Copilot:, and each entry is a `List` of ranges in that block. We can cache the contiguity of each block, and the cleanup can check the blocks up to its position.] Can we iterate this idea and have multiple stages of blocks? I'm wondering what happens when things are in different blocks. It might be easy to invalidate whole blocks at once in a tree-like setup.
 
-Note that the `eoi` token has weird position info: `⟨startPos, 0⟩`. We should check for this in the accumulative linter infrastructure, or possibly ask for eoi to be handled separately anyway
+Note that the `eoi` token has weird position info: `⟨startPos, 0⟩` if we `getRangeWithTrailing`. We should check for this in the accumulative linter infrastructure, or possibly ask for eoi to be handled separately anyway
 
 Or, we could add `⟨0,headerEndPos⟩` to the set at the start of the cleanup, then just check for it to have 0 elements. I like that. Means no special handling! Should have a test that internals for `eoi` don't change though. Or: just handle the insertion of eoi separately, and ensure that we use the "weird" version. After all, the "real" version doesn't make sense--we'd have to ensure the eoi token was captured anyway.
 
@@ -206,14 +206,14 @@ def insertRange (m : RangeBoundariesMod2) (r : String.Range) : RangeBoundariesMo
   m.insertMod2 r.start |>.insertMod2 r.stop
 
 def isRange (m : RangeBoundariesMod2) (start stop : String.Pos) : Bool :=
-  m.size = 2 && m.contains start && m.contains
+  m.size = 2 && m.contains start && m.contains stop
 
 @[inline] def isCycle (m : RangeBoundariesMod2) : Bool :=
   m.size = 0
 
 end RangeBoundariesMod2
 
-/-- Assumes that the linter has already run on the eoi token--specifically, the cleanup should have manually run it. -/
+/-- Assumes that the linter has already run on the eoi token--specifically, the cleanup should have manually run it, since cleanups happen during elaboration of `eoi`, and thus prior to the linter. -/
 def waitForAllCommands (rangeRef : IO.Ref RangeBoundariesMod2) (name : Name) (sleep : UInt32 := 500) (numSleeps : Nat := 1000) : CommandElabM Unit :=
 match numSleeps with
 | 0 => logWarning m!"{name}: Timed out waiting for all commands to be linted"
@@ -224,7 +224,6 @@ match numSleeps with
 
 end Noninteractive
 
-end Contiguity
 
 
 
@@ -244,78 +243,79 @@ end Contiguity
 
 
 
-def SourceIndexedArray (α) := Array (Option (VersionedRange × α))
 
--- TODO: Does this exist somewhere?
-def Array.setPadNone {α} (arr : Array (Option α)) (i : Nat) (a : α) : Array (Option α) :=
-  if h : i < arr.size then
-    arr.set i a
-  else
-    (arr.rightpad i none).push a
+-- def SourceIndexedArray (α) := Array (Option (VersionedRange × α))
 
-section setPadNone
+-- -- TODO: Does this exist somewhere?
+-- def Array.setPadNone {α} (arr : Array (Option α)) (i : Nat) (a : α) : Array (Option α) :=
+--   if h : i < arr.size then
+--     arr.set i a
+--   else
+--     (arr.rightpad i none).push a
 
-variable {α} {arr : Array (Option α)} {i : Nat} {a : α}
+-- section setPadNone
 
-@[simp] theorem Array.setPadNone_size : (arr.setPadNone i a).size = max arr.size (i + 1) := sorry
+-- variable {α} {arr : Array (Option α)} {i : Nat} {a : α}
 
-theorem Array.setPadNone_lt_size : i < (arr.setPadNone i a).size := by simp; omega
+-- @[simp] theorem Array.setPadNone_size : (arr.setPadNone i a).size = max arr.size (i + 1) := sorry
 
-@[simp] theorem Array.setPadNone_get : (arr.setPadNone i a)[i]'setPadNone_lt_size = some a := sorry
+-- theorem Array.setPadNone_lt_size : i < (arr.setPadNone i a).size := by simp; omega
 
-@[simp] theorem Array.setPadNone_get_none {j} (h_size : arr.size ≤ j) (h_i : j < i) :
-    (arr.setPadNone i a)[j]'(Nat.lt_trans h_i setPadNone_lt_size) = none := sorry
+-- @[simp] theorem Array.setPadNone_get : (arr.setPadNone i a)[i]'setPadNone_lt_size = some a := sorry
 
-end setPadNone
+-- @[simp] theorem Array.setPadNone_get_none {j} (h_size : arr.size ≤ j) (h_i : j < i) :
+--     (arr.setPadNone i a)[j]'(Nat.lt_trans h_i setPadNone_lt_size) = none := sorry
 
-namespace SourceIndexedArray
+-- end setPadNone
 
-def insert {α} (arr : SourceIndexedArray α) (i : VersionedRange) (a : α)
-    : SourceIndexedArray α :=
-  arr.setPadNone i.line (i, a)
+-- namespace SourceIndexedArray
 
-def getEntry? {α} (data : SourceIndexedArray α) (i : VersionedRange) : Option (VersionedRange × α) :=
-  (show Array _ from data)[i.line]?.join
+-- def insert {α} (arr : SourceIndexedArray α) (i : VersionedRange) (a : α)
+--     : SourceIndexedArray α :=
+--   arr.setPadNone i.line (i, a)
 
--- `for` vs. `foldl`?
--- what about `reduceOption` first? is there `reduceOptionMap` somewhere?
-instance : IndexesSource SourceIndexedArray where
-  getEntry? := getEntry?
-  insert := insert
-  foldl arr f init := arr.foldl (init := init) fun
-    | b, some (v,a) => f b v a
-    | b, none => b
-  empty := #[]
+-- def getEntry? {α} (data : SourceIndexedArray α) (i : VersionedRange) : Option (VersionedRange × α) :=
+--   (show Array _ from data)[i.line]?.join
 
-def filterInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
-    SourceIndexedArray α :=
-  arr.map fun | va@(some (v,_)) => if v.isValid map then va else none | none => none
+-- -- `for` vs. `foldl`?
+-- -- what about `reduceOption` first? is there `reduceOptionMap` somewhere?
+-- instance : IndexesSource SourceIndexedArray where
+--   getEntry? := getEntry?
+--   insert := insert
+--   foldl arr f init := arr.foldl (init := init) fun
+--     | b, some (v,a) => f b v a
+--     | b, none => b
+--   empty := #[]
 
-def foldlOnValid {α} {β : Type v}
-    (f : β → α → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
-  arr.foldl (init := init) fun
-    | b, some (v,a) => if v.isValid map then f b a else b
-    | b, none => b
+-- def filterInvalid {α} (arr : SourceIndexedArray α) (map : FileMap) :
+--     SourceIndexedArray α :=
+--   arr.map fun | va@(some (v,_)) => if v.isValid map then va else none | none => none
 
-def foldlOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
-    (f : β → α → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
-  arr.foldlM (init := init) fun
-    | b, some (v,a) => if v.isValid map then f b a else pure b
-    | b, none => pure b
+-- def foldlOnValid {α} {β : Type v}
+--     (f : β → α → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
+--   arr.foldl (init := init) fun
+--     | b, some (v,a) => if v.isValid map then f b a else b
+--     | b, none => b
 
-def foldrOnValid {α} {β : Type v}
-    (f : α → β → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
-  arr.foldr (init := init) fun
-    | some (v,a), b => if v.isValid map then f a b else b
-    | none, b => b
+-- def foldlOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
+--     (f : β → α → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
+--   arr.foldlM (init := init) fun
+--     | b, some (v,a) => if v.isValid map then f b a else pure b
+--     | b, none => pure b
 
-def foldrOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
-    (f : α → β → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
-  arr.foldrM (init := init) fun
-    | some (v,a), b => if v.isValid map then f a b else pure b
-    | none, b => pure b
+-- def foldrOnValid {α} {β : Type v}
+--     (f : α → β → β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : β :=
+--   arr.foldr (init := init) fun
+--     | some (v,a), b => if v.isValid map then f a b else b
+--     | none, b => b
 
-end SourceIndexedArray
+-- def foldrOnValidM {α} {β : Type v} {m : Type v → Type w} [Monad m]
+--     (f : α → β → m β) (init : β) (arr : SourceIndexedArray α) (map : FileMap) : m β :=
+--   arr.foldrM (init := init) fun
+--     | some (v,a), b => if v.isValid map then f a b else pure b
+--     | none, b => pure b
+
+-- end SourceIndexedArray
 
 
 -- Could have something which prunes all invalid data. However, this is largely unnecessary, as the
