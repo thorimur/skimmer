@@ -14,9 +14,10 @@ This repo provides a hierarchy of features:
 
 1. `@[cleanup]`:
   - figure out correct way to wait for all tasks to finish
+    - currently, we can wait for the environment by waiting for checked, but not for linters. We can wait for linters by blocking on a promise in a ref that is resolved only when all syntax ranges have been linted.
   - allow controlling option to be specified in attribute? or simply check during evaluation?
 2. `Accumulator`:
-  - Make sure `Reflike` makes sense for `Mutex` etc.
+  - Make sure `Reflike` makes sense for `Mutex` etc. in `BaseIO`.
 3. `AccumulativeLinter`:
   - `SourceIndexed`:
     - get it working! lol
