@@ -4,24 +4,28 @@ import Lean
 -- What about `Std.Mutex.atomicallyOnce`? Is that better?
 -- We might want to use `CondVar`. Is that better than waiting on a promise?
 
-def DynamicPromiseRef (α : Type) := IO.Ref (Option <| IO.Promise α × α)
+def DynamicPromiseRef (α β : Type) := IO.Ref (Option <| IO.Promise β × α)
 
-def DynamicPromiseRef.modifyGetAndResolveIf (init : α) (f : α → α) (p : α → Bool) (ref : DynamicPromiseRef α) : BaseIO (IO.Promise α) := do
-  let (pr, val) ← (← ref.get).getDM do
-    haveI : Nonempty α := ⟨init⟩
-    return (← IO.Promise.new, init)
+def DynamicPromiseRef.modifyGetAndResolveIf [Nonempty β] (init : α) (f : α → α) (p : α → Bool) (fulfill : α → β)
+    (ref : DynamicPromiseRef α β) : BaseIO (IO.Promise β) := do
+  let (pr, val) ← (← ref.get).getDM do return (← IO.Promise.new, init)
   let val := f val
   if p val then
-    pr.resolve val
+    pr.resolve <| fulfill val
   ref.set (some (pr, val))
   return pr
 
-def DynamicPromiseRef.modifyGetAndResolveIfM {m} [Monad m] [MonadLiftT (ST IO.RealWorld) m] [MonadLiftT BaseIO m] (init : α) (f : α → m α) (p : α → Bool) (ref : DynamicPromiseRef α) : m (IO.Promise α) := do
-  let (pr, val) ← (← ref.get).getDM do
-    haveI : Nonempty α := ⟨init⟩
-    return (← IO.Promise.new, init)
+@[inline] def DynamicPromiseRef.modifyGetAndResolveIf' [Nonempty β]
+    (init : α) (f : α → α) (p : α → Bool) (fulfill : α → β)
+    (ref : DynamicPromiseRef α β) : BaseIO Unit :=
+  discard <| ref.modifyGetAndResolveIf init f p fulfill
+
+def DynamicPromiseRef.modifyGetAndResolveIfM {m} [Monad m] [MonadLiftT (ST IO.RealWorld) m] [MonadLiftT BaseIO m]
+    [Nonempty β] (init : α) (f : α → m α) (p : α → m Bool) (fulfill : α → m β) (ref : DynamicPromiseRef α β) :
+    m (IO.Promise β) := do
+  let (pr, val) ← (← ref.get).getDM do return (← IO.Promise.new, init)
   let val ← f val
-  if p val then
-    pr.resolve val
+  if ← p val then
+    pr.resolve <|← fulfill val
   ref.set (some (pr, val))
   return pr
