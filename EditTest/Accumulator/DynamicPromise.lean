@@ -1,31 +1,79 @@
-import Lean
+import EditTest.Accumulator.Reflike
+import Batteries
 
--- We may need this to use a Reflike.
--- What about `Std.Mutex.atomicallyOnce`? Is that better?
--- We might want to use `CondVar`. Is that better than waiting on a promise?
+/-!
+Possibly we should change this whole design to use a mutex.
+-/
 
-def DynamicPromiseRef (α β : Type) := IO.Ref (Option <| IO.Promise β × α)
+inductive DynamicPromise (α : Type) where
+/-- Nothing has yet needed to wait on the finished data to be available, so we have not yet created a promise. -/
+| noPromise (data : α)
+-- Alternatively, we could resolve it with `Unit` and the caller could just check the ref for the data.
+/-- The state of the `DynamicPromise` when something is waiting on the finished data to be available. The promise should not be resolved without also changing the state of the `DynamicPromise` to `finished`, and the data held by `.finished` should be the same as that used to resolve the promise. -/
+| waitedOn (pr : IO.Promise α) (data : α)
+| finished (data : α) -- Should we just put the data here? Possibly avoid a `finished` constructor entirely, and subsume it with `inProgress`.
 
-def DynamicPromiseRef.modifyGetAndResolveIf [Nonempty β] (init : α) (f : α → α) (p : α → Bool) (fulfill : α → β)
-    (ref : DynamicPromiseRef α β) : BaseIO (IO.Promise β) := do
-  let (pr, val) ← (← ref.get).getDM do return (← IO.Promise.new, init)
-  let val := f val
-  if p val then
-    pr.resolve <| fulfill val
-  ref.set (some (pr, val))
-  return pr
+abbrev DynamicPromiseRef (α : Type) := IO.Ref <| DynamicPromise α
 
-@[inline] def DynamicPromiseRef.modifyGetAndResolveIf' [Nonempty β]
-    (init : α) (f : α → α) (p : α → Bool) (fulfill : α → β)
-    (ref : DynamicPromiseRef α β) : BaseIO Unit :=
-  discard <| ref.modifyGetAndResolveIf init f p fulfill
+namespace DynamicPromiseRef
 
-def DynamicPromiseRef.modifyGetAndResolveIfM {m} [Monad m] [MonadLiftT (ST IO.RealWorld) m] [MonadLiftT BaseIO m]
-    [Nonempty β] (init : α) (f : α → m α) (p : α → m Bool) (fulfill : α → m β) (ref : DynamicPromiseRef α β) :
-    m (IO.Promise β) := do
-  let (pr, val) ← (← ref.get).getDM do return (← IO.Promise.new, init)
-  let val ← f val
-  if ← p val then
-    pr.resolve <|← fulfill val
-  ref.set (some (pr, val))
-  return pr
+def modifyAndResolveIf (f : α → α) (p : α → Bool) (d : DynamicPromiseRef α) : BaseIO Unit := do
+  -- Return the promise and final state if we should resolve it.
+  let prAndFinishedData? ← d.modifyGet fun
+    | .noPromise data => (none, .noPromise (f data))
+    | .waitedOn pr data =>
+      let data := f data
+      if p data then
+        (some (pr, data), .finished data)
+      else
+        (none, .waitedOn pr data)
+    | s@(.finished _) => (none, s)
+  if let some (pr, data) := prAndFinishedData? then pr.resolve data
+
+def promise? (d : DynamicPromiseRef α) : BaseIO (Option <| IO.Promise α) := do
+  -- modifyGet to lock and avoid copying `data` accidentally? or do we never increment the reference count for data?
+  match (← d.get) with
+  | .noPromise _ | .finished _ => return none
+  | .waitedOn pr _ => return pr
+
+private inductive StatusAfterModify (α : Type) where
+| finished (a : α)
+| needsPromise
+| shouldResolve (pr : IO.Promise α) (a : α)
+| waitFor (pr : IO.Promise α)
+
+def _root_.IO.Promise.resultOrError (pr : IO.Promise α) : IO α := do
+  pr.result?.get.getDM <| throw <| IO.userError "Promise was dropped"
+
+-- Really need to check for sharing and the like.
+def modifyAndWaitFor [Nonempty α] (f : α → α) (p : α → Bool) (d : DynamicPromiseRef α) : IO α := do
+  let r : StatusAfterModify α ← d.modifyGet fun
+    | .noPromise data =>
+      let data := f data
+      if p data then
+        (.finished data, .finished data)
+      else
+        (.needsPromise, .noPromise data)
+    | .waitedOn pr data =>
+      let data := f data
+      if p data then
+        (.shouldResolve pr data, .finished data)
+      else
+        (.waitFor pr, .waitedOn pr data)
+    | s@(.finished data) => (.finished data, s)
+  match r with
+  | .finished data => return data
+  | .needsPromise => do
+    -- Wouldn't need to do all this with a lock...
+    let pr ← IO.Promise.new
+    let prOrData? : IO.Promise α ⊕ α ← d.modifyGet fun
+      | .noPromise data => (.inl pr, .waitedOn pr data)
+      | s@(.waitedOn pr _) => (.inl pr, s)
+      | s@(.finished data) => (.inr data, s)
+    match prOrData? with
+    | .inl pr   => pr.resultOrError
+    | .inr data => return data
+  | .waitFor pr => pr.resultOrError
+  | .shouldResolve pr data => do
+    pr.resolve data
+    pr.resultOrError
