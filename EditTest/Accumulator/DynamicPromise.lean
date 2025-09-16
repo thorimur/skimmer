@@ -11,7 +11,8 @@ inductive DynamicPromise (α : Type) where
 -- Alternatively, we could resolve it with `Unit` and the caller could just check the ref for the data.
 /-- The state of the `DynamicPromise` when something is waiting on the finished data to be available. The promise should not be resolved without also changing the state of the `DynamicPromise` to `finished`, and the data held by `.finished` should be the same as that used to resolve the promise. -/
 | waitedOn (pr : IO.Promise α) (data : α)
-| finished (data : α) -- Should we just put the data here? Possibly avoid a `finished` constructor entirely, and subsume it with `inProgress`.
+| finished (pr : IO.Promise α)
+| finishedNoPromise (data : α)
 
 abbrev DynamicPromiseRef (α : Type) := IO.Ref <| DynamicPromise α
 
@@ -24,20 +25,21 @@ def modifyAndResolveIf (f : α → α) (p : α → Bool) (d : DynamicPromiseRef 
     | .waitedOn pr data =>
       let data := f data
       if p data then
-        (some (pr, data), .finished data)
+        (some (pr, data), .finished pr)
       else
         (none, .waitedOn pr data)
-    | s@(.finished _) => (none, s)
+    | s => (none, s)
   if let some (pr, data) := prAndFinishedData? then pr.resolve data
 
 def promise? (d : DynamicPromiseRef α) : BaseIO (Option <| IO.Promise α) := do
   -- modifyGet to lock and avoid copying `data` accidentally? or do we never increment the reference count for data?
   match (← d.get) with
-  | .noPromise _ | .finished _ => return none
-  | .waitedOn pr _ => return pr
+  | .waitedOn pr _ | .finished pr => return pr
+  | _ => return none
 
 private inductive StatusAfterModify (α : Type) where
-| finished (a : α)
+| finishedNoPromise (a : α)
+| finished (pr : IO.Promise α)
 | needsPromise
 | shouldResolve (pr : IO.Promise α) (a : α)
 | waitFor (pr : IO.Promise α)
@@ -51,25 +53,28 @@ def modifyAndWaitFor [Nonempty α] (f : α → α) (p : α → Bool) (d : Dynami
     | .noPromise data =>
       let data := f data
       if p data then
-        (.finished data, .finished data)
+        (.finishedNoPromise data, .finishedNoPromise data)
       else
         (.needsPromise, .noPromise data)
     | .waitedOn pr data =>
       let data := f data
       if p data then
-        (.shouldResolve pr data, .finished data)
+        (.shouldResolve pr data, .finished pr)
       else
         (.waitFor pr, .waitedOn pr data)
-    | s@(.finished data) => (.finished data, s)
+    | s@(.finished pr) => (.finished pr, s)
+    | s@(.finishedNoPromise data) => (.finishedNoPromise data, s)
   match r with
-  | .finished data => return data
+  | .finishedNoPromise data => return data
+  | .finished pr => pr.resultOrError
   | .needsPromise => do
     -- Wouldn't need to do all this with a lock...
     let pr ← IO.Promise.new
     let prOrData? : IO.Promise α ⊕ α ← d.modifyGet fun
       | .noPromise data => (.inl pr, .waitedOn pr data)
       | s@(.waitedOn pr _) => (.inl pr, s)
-      | s@(.finished data) => (.inr data, s)
+      | s@(.finishedNoPromise data) => (.inr data, s)
+      | s@(.finished pr) => (.inl pr, s)
     match prOrData? with
     | .inl pr   => pr.resultOrError
     | .inr data => return data
