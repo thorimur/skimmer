@@ -31,8 +31,6 @@ Possible designs:
 3. For synchronization: the cleanup thread should wait on the first linter to finish. It should check some global punch card to see if each is ready in turn. If not, it should store some wakeup callback in the given linter's place on the punch card, sleeping until woken up. then the linter punches it when finishing, waking up the cleanup thread. It could store the condvar and wait on it, perhaps? Or it could somehow bind its own thread to a task stored there? Not sure.
 -/
 
-#check addLinter
-
 structure LinterWithCleanup where
   name        : Name := by exact decl_name%
   run         : CommandElab
