@@ -105,6 +105,7 @@ def runLintersWithCleanup : CommandElab := fun eoi =>
     let header ← parseHeaderRaw (← getSourceInputContext)
     unless header.isMissing do -- throw error if not?
       for h : i in 0...ls.size do
+        -- what if `runOnHeader`/`runOnEOI` error?
         if ← ls[i].runOnHeader then ls[i].runOn header
         IO.recordRange i header
     for h : i in 0...ls.size do
