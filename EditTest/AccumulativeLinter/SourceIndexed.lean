@@ -193,25 +193,6 @@ We also manually run the linter in question on the eoi token, since otherwise it
 -/
 
 
-namespace Noninteractive
-
-def RangeBoundariesMod2 := Std.HashSet String.Pos
-
-namespace RangeBoundariesMod2
-
-def insertMod2 (m : RangeBoundariesMod2) (k : String.Pos) : RangeBoundariesMod2 :=
-  if m.contains k then m.erase k else m.insert k
-
-def insertRange (m : RangeBoundariesMod2) (r : String.Range) : RangeBoundariesMod2 :=
-  m.insertMod2 r.start |>.insertMod2 r.stop
-
-def isRange (m : RangeBoundariesMod2) (start stop : String.Pos) : Bool :=
-  m.size = 2 && m.contains start && m.contains stop
-
-@[inline] def isCycle (m : RangeBoundariesMod2) : Bool :=
-  m.size = 0
-
-end RangeBoundariesMod2
 
 /-- Assumes that the linter has already run on the eoi token--specifically, the cleanup should have manually run it, since cleanups happen during elaboration of `eoi`, and thus prior to the linter. -/
 def waitForAllCommands (rangeRef : IO.Ref RangeBoundariesMod2) (name : Name) (sleep : UInt32 := 500) (numSleeps : Nat := 1000) : CommandElabM Unit :=
