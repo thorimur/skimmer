@@ -61,5 +61,7 @@ def runLintersWithCleanup : CommandElab := fun eoi =>
       if ← ls[i].runOnEOI then ls[i].runOn eoi
       IO.recordRange i eoi
     for h : i in 0...ls.size do
-      IO.waitForPunched! i
-      ls[i].cleanup
+      -- Note: we only check this here (as opposed to before `recordRange`s) so that we never accidentally wait indefinitely.
+      if ← ls[i].shouldCleanup then
+        IO.waitForPunched! i
+        ls[i].cleanup

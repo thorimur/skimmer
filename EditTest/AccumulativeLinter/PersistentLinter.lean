@@ -25,20 +25,17 @@ structure PersistentRef (ρ κ) where
   add     : ρ → κ → κ
   persist : κ → Environment → Environment
 
-structure PersistentLinter (ρ κ) extends PersistentRef ρ κ where
+structure PersistentLinter (ρ κ) extends PersistentRef ρ κ, LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
-  runOnEOI : CommandElabM Bool := pure true
-  runOnHeader : CommandElabM Bool := pure false
 
-def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup where
+def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup := { l with
   run stx := do
     let some v ← l.produce? stx | return
     l.ref.modify (l.add v)
   cleanup := do
     let k ← l.ref.get
     modifyEnv (l.persist k)
-  runOnEOI    := l.runOnEOI
-  runOnHeader := l.runOnHeader
+}
 
 def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithCleanup l.toLinterWithCleanup
 
@@ -47,15 +44,13 @@ def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithC
 
 /-! ### AccumulativeLinter -/
 
-structure AccumulativeLinterDescr (α β σ ρ κ) extends PersistentEnvExtensionDescr α β σ where
+structure AccumulativeLinterDescr (α β σ ρ κ) extends PersistentEnvExtensionDescr α β σ, LinterWithCleanupSettings where
   -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
   init : κ
   add : ρ → κ → κ
   submit : κ → Array β
   -- Linter
   produce? : Syntax → CommandElabM (Option ρ)
-  runOnEOI : CommandElabM Bool := pure true
-  runOnHeader : CommandElabM Bool := pure false
 
 structure AccumulativeLinter (α β σ ρ κ) extends PersistentLinter ρ κ where
   ext : PersistentEnvExtension α β σ

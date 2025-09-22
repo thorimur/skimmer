@@ -2,14 +2,17 @@ import EditTest.LinterWithCleanup.RangeRecord
 
 open Lean Elab Command
 
-structure LinterWithCleanup where
+-- We use this elsewhere repeatedly, in `*Descr`s, so factor it out.
+structure LinterWithCleanupSettings where
+  shouldCleanup : CommandElabM Bool := pure true
+  runOnEOI    : CommandElabM Bool := pure true
+  runOnHeader : CommandElabM Bool := pure false
+
+structure LinterWithCleanup extends LinterWithCleanupSettings where
   name        : Name := by exact decl_name%
   run         : CommandElab
   /-- Waits for this linter's `run` to finish on all commands, then runs. The current ref is the `eoi` token. -/
   cleanup     : CommandElabM Unit
-  -- shouldCleanup : CommandElabM Bool := pure true -- for checking options?
-  runOnEOI    : CommandElabM Bool := pure true
-  runOnHeader : CommandElabM Bool := pure false
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>
   unless stx.getKind == ``Parser.Command.eoi do f stx
