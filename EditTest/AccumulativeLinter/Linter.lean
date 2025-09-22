@@ -1,6 +1,4 @@
-import Lean
-import Batteries
-import EditTest.AccumulativeLinter.SourceIndexed
+import EditTest.AccumulativeLinter.RangeRecord
 
 /-!
 1. An accumulative linter could provide a `run : CommandElabM (Option α)` (or `α`), or `run : CommandElabM (Option (α → α))`, or `CommandElabM (Option (α → β))` with some way to modify the state `modify : α → β → α` like `addEntry`. But I worry that's too inflexible. Maybe as a preset? The base should just ask for some ordinary `run`, and we should provide API to modify the full state in a range-recording way. One other option is to decouple the range recording from the data, which breaks some invariants, but if it's hidden from the user, that's fine.
@@ -36,20 +34,71 @@ structure LinterWithCleanup where
   run         : CommandElab
   /-- Waits for this linter's `run` to finish on all commands, then runs. The current ref is the `eoi` token. -/
   cleanup     : CommandElabM Unit
+  -- shouldCleanup : CommandElabM Bool := pure true -- for checking options?
   runOnEOI    : CommandElabM Bool := pure true
   runOnHeader : CommandElabM Bool := pure false
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>
   unless stx.getKind == ``Parser.Command.eoi do f stx
 
-def updateRecordRef (n : Name) (stx : Syntax) : BaseIO Unit := sorry
-
-def LinterWithCleanup.toLinter (l : LinterWithCleanup) : Linter where
+def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter where
   name    := l.name
-  run stx := do exceptOnEOI l.run stx; updateRecordRef l.name stx
+  run stx := try exceptOnEOI l.run stx finally IO.recordRange idx stx
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
 
 def addLinterWithCleanup (l : LinterWithCleanup) : IO Unit := do
-  lintersWithCleanupRef.modify (·.push l)
-  addLinter l.toLinter
+  let idx ← lintersWithCleanupRef.modifyGet fun a => let idx := a.size; (idx, a.push l)
+  punchCardsRef.modify (·.push .unfinished)
+  rangeRecordsRef.modify (·.push {})
+  addLinter <| l.toLinter idx
+
+/-- Only to be used when running linters with cleanup manually, outside of `runLinters`. Should replicate loop of `runLinters`.
+
+Does *not* update the `rangeRecordsRef`. -/
+def LinterWithCleanup.runOn (linter : LinterWithCleanup) (stx : Syntax) : CommandElabM Unit := do
+  withTraceNode `Elab.lint (fun _ => return m!"running linter: {.ofConstName linter.name}")
+      (tag := linter.name.toString) do
+    let savedState ← get
+    try
+      linter.run stx
+    catch ex =>
+      match ex with
+      | Exception.error ref msg =>
+        logException (.error ref m!"linter {.ofConstName linter.name} failed: {msg}")
+      | Exception.internal _ _ =>
+        logException ex
+    finally
+      -- TODO: it would be good to preserve even more state (#4363) but preserving info
+      -- trees currently breaks from linters adding context-less info nodes
+      modify fun s => { savedState with messages := s.messages, traceState := s.traceState }
+
+namespace Lean.Parser
+
+def parseHeaderRaw (inputCtx : InputContext) : IO Syntax := do
+  let dummyEnv ← mkEmptyEnvironment
+  let p   := andthenFn whitespace Module.header.fn
+  let tokens := Module.updateTokens (getTokenTable dummyEnv)
+  let s   := p.run inputCtx { env := dummyEnv, options := {} } tokens (mkParserState inputCtx.inputString)
+  if s.stxStack.isEmpty then return .missing else return s.stxStack.back
+
+def getSourceInputContext {m} [Monad m] [MonadFileMap m] [MonadLog m] : m InputContext :=
+  return { inputString := (← getFileMap).source, fileMap := ← getFileMap, fileName := ← getFileName}
+
+end Lean.Parser
+
+open Parser in
+def runLintersWithCleanup (eoi : TSyntax ``Parser.Command.eoi) : CommandElabM Unit := do
+  -- profileitM Exception "linting" (← getOptions) do
+  -- withTraceNode `Elab.lint (fun _ => return m!"running linters") do
+  let ls ← lintersWithCleanupRef.get
+  let header ← parseHeaderRaw (← getSourceInputContext)
+  for h : i in 0...ls.size do
+    if ← ls[i].runOnHeader then ls[i].runOn header
+    IO.recordRange i header
+  for h : i in 0...ls.size do
+    if ← ls[i].runOnEOI then ls[i].runOn eoi
+    IO.recordRange i eoi
+  for h : i in 0...ls.size do
+    IO.waitForPunched i
+    ls[i].cleanup
