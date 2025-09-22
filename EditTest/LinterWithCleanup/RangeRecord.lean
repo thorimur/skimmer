@@ -1,5 +1,5 @@
 import EditTest.Lean.Data.Array
-import EditTest.AccumulativeLinter.PunchCard
+import EditTest.LinterWithCleanup.PunchCard
 
 abbrev RangeBoundariesMod2 := Std.HashSet String.Pos
 

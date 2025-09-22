@@ -1,4 +1,3 @@
-import Lean
 import EditTest.Lean.Data.Array
 
 /-!
