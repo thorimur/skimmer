@@ -42,4 +42,4 @@ def IO.recordRange (idx : Nat) (stx : Syntax) : BaseIO Unit := do
     | panic! "`IO.recordRange` called on noncanonical syntax"
   let isCycle ← rangeRecordsRef.modifyGet fun a =>
     a.modifyGet idx fun rbs => let rbs := rbs.insertRange range; (rbs.isCycle, rbs)
-  if isCycle then IO.punch idx
+  if isCycle then IO.punch! idx
