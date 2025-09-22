@@ -20,6 +20,7 @@ initialize addPersistentLinter myPLinter
 
 open Lean Elab Command
 
+-- Could potentially fold into `PersistentLinter`.
 structure PersistentRef (ρ κ) where
   ref     : IO.Ref κ
   add     : ρ → κ → κ
@@ -39,8 +40,7 @@ def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWi
 
 def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithCleanup l.toLinterWithCleanup
 
--- Include `*Descr` versions? Not really necessary, just saving an `initialize myRef`. But makes `AccumulativeLinterDescr` nicer.
-
+-- Include `*Descr` versions? Not really necessary, just saving an `initialize myRef`.
 
 /-! ### AccumulativeLinter -/
 
