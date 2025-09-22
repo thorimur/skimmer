@@ -1,4 +1,5 @@
 import EditTest.AccumulativeLinter.RangeRecord
+import EditTest.Cleanup.Elab
 
 /-!
 1. An accumulative linter could provide a `run : CommandElabM (Option α)` (or `α`), or `run : CommandElabM (Option (α → α))`, or `CommandElabM (Option (α → β))` with some way to modify the state `modify : α → β → α` like `addEntry`. But I worry that's too inflexible. Maybe as a preset? The base should just ask for some ordinary `run`, and we should provide API to modify the full state in a range-recording way. One other option is to decouple the range recording from the data, which breaks some invariants, but if it's hidden from the user, that's fine.
@@ -43,7 +44,9 @@ structure LinterWithCleanup where
 
 def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter where
   name    := l.name
-  run stx := try exceptOnEOI l.run stx finally IO.recordRange idx stx
+  run stx :=
+    unless Elab.inServer.get (← getOptions) do -- Only run noninteractively.
+      try exceptOnEOI l.run stx finally IO.recordRange idx stx
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
 
@@ -83,22 +86,30 @@ def parseHeaderRaw (inputCtx : InputContext) : IO Syntax := do
   if s.stxStack.isEmpty then return .missing else return s.stxStack.back
 
 def getSourceInputContext {m} [Monad m] [MonadFileMap m] [MonadLog m] : m InputContext :=
-  return { inputString := (← getFileMap).source, fileMap := ← getFileMap, fileName := ← getFileName}
+  return {
+    inputString := (← getFileMap).source
+    fileMap     := ← getFileMap
+    fileName    := ← getFileName
+  }
 
 end Lean.Parser
 
 open Parser in
-def runLintersWithCleanup (eoi : TSyntax ``Parser.Command.eoi) : CommandElabM Unit := do
-  -- profileitM Exception "linting" (← getOptions) do
-  -- withTraceNode `Elab.lint (fun _ => return m!"running linters") do
-  let ls ← lintersWithCleanupRef.get
-  let header ← parseHeaderRaw (← getSourceInputContext)
-  for h : i in 0...ls.size do
-    if ← ls[i].runOnHeader then ls[i].runOn header
-    IO.recordRange i header
-  for h : i in 0...ls.size do
-    if ← ls[i].runOnEOI then ls[i].runOn eoi
-    IO.recordRange i eoi
-  for h : i in 0...ls.size do
-    IO.waitForPunched i
-    ls[i].cleanup
+@[cleanup]
+def runLintersWithCleanup : CommandElab := fun eoi =>
+  -- Only run noninteractively.
+  unless Elab.inServer.get (← getOptions) do
+    -- profileitM Exception "linting" (← getOptions) do
+    -- withTraceNode `Elab.lint (fun _ => return m!"running linters") do
+    let ls ← lintersWithCleanupRef.get
+    let header ← parseHeaderRaw (← getSourceInputContext)
+    unless header.isMissing do -- throw error if not?
+      for h : i in 0...ls.size do
+        if ← ls[i].runOnHeader then ls[i].runOn header
+        IO.recordRange i header
+    for h : i in 0...ls.size do
+      if ← ls[i].runOnEOI then ls[i].runOn eoi
+      IO.recordRange i eoi
+    for h : i in 0...ls.size do
+      IO.waitForPunched i
+      ls[i].cleanup
