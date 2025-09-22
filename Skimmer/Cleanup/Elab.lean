@@ -1,4 +1,4 @@
-import EditTest.Cleanup.Attr
+import Skimmer.Cleanup.Attr
 
 open Lean Elab Command Parser
 

@@ -1,4 +1,4 @@
-import EditTest.StatefulLinter.Add
+import Skimmer.StatefulLinter.Add
 
 open Lean Elab Command
 

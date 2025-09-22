@@ -1,5 +1,5 @@
-import EditTest.Refactor.Attr
-import EditTest.Accumulator.Defs
+import Skimmer.Refactor.Attr
+import Skimmer.Accumulator.Defs
 
 open Lean
 

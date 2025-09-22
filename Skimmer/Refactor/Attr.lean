@@ -1,5 +1,5 @@
-import EditTest.Edit
-import EditTest.AttrUtil
+import Skimmer.Edit
+import Skimmer.AttrUtil
 
 open Lean Elab Command
 

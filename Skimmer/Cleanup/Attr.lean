@@ -1,5 +1,5 @@
 import Lean
-import EditTest.AttrUtil
+import Skimmer.AttrUtil
 
 /-!
 # Cleanup functionality

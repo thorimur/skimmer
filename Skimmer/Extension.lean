@@ -1,5 +1,5 @@
-import EditTest.Edit
-import EditTest.AttrUtil
+import Skimmer.Edit
+import Skimmer.AttrUtil
 
 open Lean
 
@@ -52,7 +52,7 @@ def executeEdits (env : Environment) (root : Name) : IO Unit := do
 
 def showEdits (env : Environment) (root : Name) : IO Unit := do
   -- let base ← Mathlib.getPackageDir "Mathlib"
-  let sourceDir ← getDirOfModule (← getSrcSearchPath) `EditTest
+  let sourceDir ← getDirOfModule (← getSrcSearchPath) `Skimmer
   let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
     let edits := editss[idx]

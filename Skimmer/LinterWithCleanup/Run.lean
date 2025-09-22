@@ -1,5 +1,5 @@
-import EditTest.Cleanup.Elab
-import EditTest.LinterWithCleanup.Defs
+import Skimmer.Cleanup.Elab
+import Skimmer.LinterWithCleanup.Defs
 
 open Lean Elab Command
 

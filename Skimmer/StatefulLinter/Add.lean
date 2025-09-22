@@ -1,6 +1,6 @@
 import Lean
-import EditTest.StatefulLinter.SourceIndexed
-import EditTest.StatefulLinter.Reflike
+import Skimmer.StatefulLinter.SourceIndexed
+import Skimmer.StatefulLinter.Reflike
 
 open Lean Elab Command
 

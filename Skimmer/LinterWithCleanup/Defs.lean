@@ -1,4 +1,4 @@
-import EditTest.LinterWithCleanup.RangeRecord
+import Skimmer.LinterWithCleanup.RangeRecord
 
 open Lean Elab Command
 

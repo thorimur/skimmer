@@ -1,4 +1,4 @@
-import EditTest.Lean.Data.Array
+import Skimmer.Lean.Data.Array
 
 /-!
 TODO: pick a better metaphor?

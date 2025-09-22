@@ -1,13 +1,13 @@
-name = "EditTest"
+name = "Skimmer"
 version = "0.1.0"
-defaultTargets = ["EditTest", "write_edits"]
+defaultTargets = ["Skimmer", "write_edits"]
 
 [[lean_lib]]
-name = "EditTest"
+name = "Skimmer"
 
 [[lean_exe]]
 name = "write_edits"
-root = "EditTest.Execute"
+root = "Skimmer.Execute"
 
 [[require]]
 name = "batteries"

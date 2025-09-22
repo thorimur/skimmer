@@ -1,4 +1,4 @@
-import EditTest.LinterWithCleanup.Run
+import Skimmer.LinterWithCleanup.Run
 
 /-!
 We provide a way to construct a `LinterWithCleanup` that handles an `IO.Ref`.
