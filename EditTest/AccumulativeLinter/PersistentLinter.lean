@@ -8,17 +8,18 @@ initialize myRef : IO.Ref κ ← IO.mkRef init
 
 def myPLinter : PersistentLinter ρ κ where
   ref           := myRef
-  add r k       := ...
-  persist k env := ...
-  produce? stx  := ...
-  runOnEOI      := ...
-  runOnHeader   := ...
+  add r k       := _ : κ
+  persist k env := _ : Environment
+  produce? stx  := _ : CommandElabM (Option ρ)
+  runOnEOI, runOnHeader, shouldCleanup := _ : CommandElabM Bool
 
 initialize addPersistentLinter myPLinter
 ```
 -/
 
 open Lean Elab Command
+
+-- TODO: consider rename `PersistentLinter` ↦ `StatefulLinterWithCleanup`, `AccumulativeLinter` ↦ `PersistentLinter`
 
 -- Could potentially fold into `PersistentLinter`.
 structure PersistentRef (ρ κ) where
@@ -42,7 +43,11 @@ def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithC
 
 -- Include `*Descr` versions? Not really necessary, just saving an `initialize myRef`.
 
-/-! ### AccumulativeLinter -/
+/-!
+### AccumulativeLinter
+
+`AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
+-/
 
 structure AccumulativeLinterDescr (α β σ ρ κ) extends PersistentEnvExtensionDescr α β σ, LinterWithCleanupSettings where
   -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
@@ -71,7 +76,11 @@ def registerAndAddAccumulativeLinter [Inhabited σ] (a : AccumulativeLinterDescr
   addPersistentLinter persistentLinter
   return { persistentLinter with ext }
 
-/-! ### SimpleAccumulativeLinter -/
+/-!
+### SimpleAccumulativeLinter
+
+`SimpleAccumulativeLinter`s store values of type `β` used to update the environment extension in an `IO.Ref (Array β)`, and add the contents of the array in sequence to the extension.
+-/
 
 def SimpleAccumulativeLinter (α β σ) := AccumulativeLinter α β σ β (Array β)
 
