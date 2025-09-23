@@ -23,23 +23,27 @@ end RangeBoundariesMod2
 /-- This should only be pushed to by `addLinterWithCleanup`. -/
 initialize rangeRecordsRef : IO.Ref (Array RangeBoundariesMod2) ← IO.mkRef #[]
 
-open Lean
+open Lean Elab Command
 
-private def _root_.Lean.Syntax.getRangeWithTrailingAndLoopOnEOI? (stx : Syntax) :
-    Option String.Range :=
-  if stx.getKind == ``Parser.Command.eoi then
-    -- Currently, `getRangeWithTrailing?` returns `⟨pos, 0⟩` for `eoi`, but this may change.
-    stx.getRangeWithTrailing? (canonicalOnly := true) |>.map fun r =>
-      if r.stop == 0 then r else ⟨r.start, 0⟩
+private def Lean.Syntax.getRangeForRecordRange (stx : Syntax) (useCmdPos := false) : CommandElabM String.Range := do
+  let stop : String.Pos ← if stx.isOfKind ``Parser.Command.eoi then
+    pure 0
   else
-    stx.getRangeWithTrailing? (canonicalOnly := true)
+    (stx.getTrailingTailPos? true).getDM <|
+      panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
+  let start ← if useCmdPos then pure (← read).cmdPos else
+    (stx.getPos? true).getDM <|
+      panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
+  return ⟨start, stop⟩
 
 /-- Records the range of the given syntax in the `RangeBoundariesMod2` hashset at the index `idx` of `rangeRecordsRef`. If the result is a cycle (i.e. all syntax has been processed), punches the punchcard at the same index in `punchCardsRef`.
 
 This should only be called on original syntax. -/
-def IO.recordRange (idx : Nat) (stx : Syntax) : BaseIO Unit := do
-  let some range := stx.getRangeWithTrailingAndLoopOnEOI?
-    | panic! "`IO.recordRange` called on noncanonical syntax"
+def IO.recordRange (idx : Nat) (range : String.Range) : BaseIO Unit := do
   let isCycle ← rangeRecordsRef.modifyGet fun a =>
     a.modifyGet idx fun rbs => let rbs := rbs.insertRange range; (rbs.isCycle, rbs)
   if isCycle then IO.punch! idx
+
+def Lean.Elab.Command.recordRange (idx : Nat) (stx : Syntax) (useCmdPos := false) :
+    CommandElabM Unit := do
+  IO.recordRange idx <|← stx.getRangeForRecordRange useCmdPos

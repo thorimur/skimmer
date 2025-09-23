@@ -15,14 +15,14 @@ structure LinterWithCleanup extends LinterWithCleanupSettings where
   cleanup     : CommandElabM Unit
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>
-  unless stx.getKind == ``Parser.Command.eoi do f stx
+  unless stx.isOfKind ``Parser.Command.eoi do f stx
 
 def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter where
   name    := l.name
   run stx :=
     -- Only run noninteractively. Assumes `Elab.inServer` is never wrong.
     unless Elab.inServer.get (← getOptions) do
-      try exceptOnEOI l.run stx finally IO.recordRange idx stx
+      try exceptOnEOI l.run stx finally recordRange idx stx
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
 

@@ -56,10 +56,10 @@ def runLintersWithCleanup : CommandElab := fun eoi =>
       for h : i in 0...ls.size do
         -- what if `runOnHeader`/`runOnEOI` error?
         if ← ls[i].runOnHeader then ls[i].runOn header
-        IO.recordRange i header
+        recordRange i header (useCmdPos := false)
     for h : i in 0...ls.size do
       if ← ls[i].runOnEOI then ls[i].runOn eoi
-      IO.recordRange i eoi
+      recordRange i eoi (useCmdPos := false) -- `#guard_msgs` cannot guard `eoi`
     for h : i in 0...ls.size do
       -- Note: we only check this here (as opposed to before `recordRange`s) so that we never accidentally wait indefinitely.
       if ← ls[i].shouldCleanup then
