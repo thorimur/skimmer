@@ -31,6 +31,7 @@ deriving Nonempty
 
 structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
+  produceOnHeader? : Option (Substring → Syntax → CommandElabM (Option ρ)) := none
   submit : κ → CommandElabM ε
 deriving Nonempty
 
@@ -42,6 +43,10 @@ def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : Linte
     run stx := do
       let some v ← l.produce? stx | return
       l.ref.modify (l.add v)
+    runOnHeader := l.produceOnHeader?.map fun produceOnHeader =>
+      fun ws stx => do
+        let some v ← produceOnHeader ws stx | return
+        l.ref.modify (l.add v)
     cleanup := do
       let k ← l.ref.get
       let e ← l.submit k

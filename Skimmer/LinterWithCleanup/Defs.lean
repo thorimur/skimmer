@@ -6,7 +6,6 @@ open Lean Elab Command
 structure LinterWithCleanupSettings where
   shouldCleanup : CommandElabM Bool := pure true
   runOnEOI    : CommandElabM Bool := pure true
-  runOnHeader : CommandElabM Bool := pure false
 deriving Inhabited
 
 structure LinterWithCleanup extends LinterWithCleanupSettings where
@@ -14,6 +13,7 @@ structure LinterWithCleanup extends LinterWithCleanupSettings where
   run         : CommandElab
   /-- Waits for this linter's `run` to finish on all commands, then runs. The current ref is the `eoi` token. -/
   cleanup     : CommandElabM Unit
+  runOnHeader : Option (Substring → Syntax → CommandElabM Unit) := none
 deriving Inhabited
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>
@@ -25,7 +25,7 @@ def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter wher
     -- Only run noninteractively. Assumes `Elab.inServer` is never wrong.
     unless Elab.inServer.get (← getOptions) do
       -- Use the `cmdPos` for the start position to handle `#guard_msgs` correctly.
-      try exceptOnEOI l.run stx finally recordRange idx stx (useCmdPos := true)
+      try exceptOnEOI l.run stx finally recordRange idx stx
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
 
