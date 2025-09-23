@@ -22,7 +22,8 @@ def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter wher
   run stx :=
     -- Only run noninteractively. Assumes `Elab.inServer` is never wrong.
     unless Elab.inServer.get (← getOptions) do
-      try exceptOnEOI l.run stx finally recordRange idx stx
+      -- Use the `cmdPos` for the start position to handle `#guard_msgs` correctly.
+      try exceptOnEOI l.run stx finally recordRange idx stx (useCmdPos := true)
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
 
