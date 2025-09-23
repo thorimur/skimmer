@@ -64,6 +64,7 @@ structure AccumulativeLinterDescrBase (β ρ κ) extends LinterWithCleanupSettin
   submit : κ → Array β
   -- Linter
   produce? : Syntax → CommandElabM (Option ρ)
+  extraCleanup : κ → CommandElabM κ := pure
 
 structure AccumulativeLinterDescr (α β σ ρ κ)
 extends AccumulativeLinterDescrBase β ρ κ, PersistentEnvExtensionDescr α β σ
