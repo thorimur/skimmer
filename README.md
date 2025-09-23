@@ -2,9 +2,9 @@
 
 **WIP!**
 
-This repo provides ways to *skim* the "surface" of the Lean process—here, linter executions and file endings—to capture and persist data.
+This repo provides ways to *skim* the "surface" of the Lean process—linter executions and file endings—to capture and persist data which is usually ephemeral.
 
-This involves ahierarchy of features:
+Specifically, we provide a hierarchy of features:
 
 1. Declarations tagged with `@[cleanup]` are run at the end of every file.
 2. A `LinterWithCleanup` waits for itself to finish running on all declarations, then runs a `cleanup` at the end of each file. In this way, it has the potential to persist state into the environment by modifying refs. (These currently can only be run noninteractively.)
@@ -28,3 +28,4 @@ This involves ahierarchy of features:
   - Explore ways for other linters to hook into framework, esp. tactic analysis framework
 3. Infrastructure
   - Create utilities for more targeted actions (e.g. folders instead of library, only dependents of a single file, etc.)
+4. Documentation, documentation, documentation!
