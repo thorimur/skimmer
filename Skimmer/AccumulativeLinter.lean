@@ -22,34 +22,34 @@ open Lean Elab Command
 -- TODO: consider rename `PersistentLinter` ↦ `StatefulLinterWithCleanup`, `AccumulativeLinter` ↦ `PersistentLinter`
 
 -- Could potentially fold into `PersistentLinter`.
-structure PersistentRef (ρ κ) where
+-- TODO: consider refactoring. As is, this structure doesn't make much sense by itself.
+structure PersistentRef (ρ κ ε) where
   ref     : IO.Ref κ
   add     : ρ → κ → κ
-  -- !! Consider changing signature to be monadic
-  persist : κ → Environment → Environment
+  persist : ε → Environment → Environment
 deriving Nonempty
 
-structure PersistentLinterBase (ρ κ) extends LinterWithCleanupSettings where
+structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
-  -- !! Consider subsuming into `persist`
-  extraCleanup : κ → CommandElabM κ := pure
+  submit : κ → CommandElabM ε
 deriving Nonempty
 
-structure PersistentLinter (ρ κ) extends PersistentLinterBase ρ κ, PersistentRef ρ κ
+structure PersistentLinter (ρ κ ε) extends PersistentLinterBase ρ κ ε, PersistentRef ρ κ ε
 deriving Nonempty
 
-def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup :=
+def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : LinterWithCleanup :=
   { l with
     run stx := do
       let some v ← l.produce? stx | return
       l.ref.modify (l.add v)
     cleanup := do
       let k ← l.ref.get
-      let k ← l.extraCleanup k
-      modifyEnv (l.persist k) -- or use `setEnv`?
+      let e ← l.submit k
+      modifyEnv (l.persist e) -- or use `setEnv`?
   }
 
-def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithCleanup l.toLinterWithCleanup
+def addPersistentLinter (l : PersistentLinter ρ κ ε) : IO Unit :=
+  addLinterWithCleanup l.toLinterWithCleanup
 
 -- Include `*Descr` versions? Not really necessary, just saving an `initialize myRef`.
 
@@ -59,17 +59,15 @@ def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithC
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
 -/
 
-structure AccumulativeLinterDescrBase (β ρ κ) extends PersistentLinterBase ρ κ where
+structure AccumulativeLinterDescrBase (β ρ κ) extends PersistentLinterBase ρ κ (Array β) where
   -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
   init : κ
   add : ρ → κ → κ
-  -- !! Consider changing signature to be monadic if we change `persist`
-  submit : κ → Array β
 
 structure AccumulativeLinterDescr (α β σ ρ κ)
 extends AccumulativeLinterDescrBase β ρ κ, PersistentEnvExtensionDescr α β σ
 
-structure AccumulativeLinter (α β σ ρ κ) extends PersistentLinter ρ κ where
+structure AccumulativeLinter (α β σ ρ κ) extends PersistentLinter ρ κ (Array β) where
   ext : PersistentEnvExtension α β σ
 
 instance [Inhabited σ] [Nonempty κ] [Nonempty ρ] :
@@ -80,10 +78,9 @@ def registerAndAddAccumulativeLinterUsingExt
     (ext : PersistentEnvExtension α β σ)
     (a : AccumulativeLinterDescrBase β ρ κ) : IO (AccumulativeLinter α β σ ρ κ) := do
   let ref ← IO.mkRef a.init
-  let persistentLinter : PersistentLinter ρ κ := { a with
+  let persistentLinter : PersistentLinter ρ κ (Array β) := { a with
     ref
-    persist k env := Id.run do
-      let bs := a.submit k
+    persist bs env := Id.run do
       if bs.isEmpty then return env else
         let mut env := env
         for b in bs do
@@ -110,7 +107,7 @@ instance [Inhabited σ] [Nonempty β] : Nonempty (SimpleAccumulativeLinter α β
   ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
 
 -- Should probably just be a `def`, but gets us a convenient projection.
-structure SimpleAccumulativeLinterDescrBase β extends PersistentLinterBase β (Array β)
+structure SimpleAccumulativeLinterDescrBase β extends PersistentLinterBase β (Array β) (Array β)
 
 structure SimpleAccumulativeLinterDescr (α β σ)
 extends SimpleAccumulativeLinterDescrBase β, PersistentEnvExtensionDescr α β σ
@@ -121,7 +118,7 @@ def SimpleAccumulativeLinterDescrBase.toAccumulativeLinterDescrBase
   { s with
     init := #[]
     add b bs := bs.push b
-    submit := id
+    submit := pure
   }
 
 def SimpleAccumulativeLinterDescr.toAccumulativeLinterDescr
