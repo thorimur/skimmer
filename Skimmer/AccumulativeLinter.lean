@@ -26,18 +26,21 @@ structure PersistentRef (ρ κ) where
   ref     : IO.Ref κ
   add     : ρ → κ → κ
   persist : κ → Environment → Environment
+deriving Nonempty
 
 structure PersistentLinter (ρ κ) extends PersistentRef ρ κ, LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
+deriving Nonempty
 
-def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup := { l with
-  run stx := do
-    let some v ← l.produce? stx | return
-    l.ref.modify (l.add v)
-  cleanup := do
-    let k ← l.ref.get
-    modifyEnv (l.persist k)
-}
+def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup :=
+  { l with
+    run stx := do
+      let some v ← l.produce? stx | return
+      l.ref.modify (l.add v)
+    cleanup := do
+      let k ← l.ref.get
+      modifyEnv (l.persist k)
+  }
 
 def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithCleanup l.toLinterWithCleanup
 
@@ -60,7 +63,12 @@ structure AccumulativeLinterDescr (α β σ ρ κ) extends PersistentEnvExtensio
 structure AccumulativeLinter (α β σ ρ κ) extends PersistentLinter ρ κ where
   ext : PersistentEnvExtension α β σ
 
-def registerAndAddAccumulativeLinter [Inhabited σ] (a : AccumulativeLinterDescr α β σ ρ κ) : IO (AccumulativeLinter α β σ ρ κ) := do
+instance [Inhabited σ] [Nonempty κ] [Nonempty ρ] :
+    Nonempty (AccumulativeLinter α β σ ρ κ) :=
+  ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
+
+def registerAndAddAccumulativeLinter [Inhabited σ]
+    (a : AccumulativeLinterDescr α β σ ρ κ) : IO (AccumulativeLinter α β σ ρ κ) := do
   let ref ← IO.mkRef a.init
   let ext ← registerPersistentEnvExtension a.toPersistentEnvExtensionDescr
   let persistentLinter : PersistentLinter ρ κ := { a with
@@ -84,17 +92,22 @@ def registerAndAddAccumulativeLinter [Inhabited σ] (a : AccumulativeLinterDescr
 
 def SimpleAccumulativeLinter (α β σ) := AccumulativeLinter α β σ β (Array β)
 
+instance [Inhabited σ] [Nonempty β] : Nonempty (SimpleAccumulativeLinter α β σ) :=
+  ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
+
 structure SimpleAccumulativeLinterDescr (α β σ) extends PersistentEnvExtensionDescr α β σ where
   produce? : Syntax → CommandElabM (Option β)
   runOnEOI : CommandElabM Bool := pure true
   runOnHeader : CommandElabM Bool := pure false
 
-def SimpleAccumulativeLinterDescr.toAccumulativeLinterDescr (s : SimpleAccumulativeLinterDescr α β σ) :
-    AccumulativeLinterDescr α β σ β (Array β) := { s with
-  init := #[]
-  add b bs := bs.push b
-  submit := id
-}
+def SimpleAccumulativeLinterDescr.toAccumulativeLinterDescr
+    (s : SimpleAccumulativeLinterDescr α β σ) :
+    AccumulativeLinterDescr α β σ β (Array β) :=
+  { s with
+    init := #[]
+    add b bs := bs.push b
+    submit := id
+  }
 
 def registerAndAddSimpleAccumulativeLinter [Inhabited σ] (s : SimpleAccumulativeLinterDescr α β σ) :
     IO (SimpleAccumulativeLinter α β σ) :=

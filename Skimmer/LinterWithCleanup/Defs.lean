@@ -7,12 +7,14 @@ structure LinterWithCleanupSettings where
   shouldCleanup : CommandElabM Bool := pure true
   runOnEOI    : CommandElabM Bool := pure true
   runOnHeader : CommandElabM Bool := pure false
+deriving Inhabited
 
 structure LinterWithCleanup extends LinterWithCleanupSettings where
   name        : Name := by exact decl_name%
   run         : CommandElab
   /-- Waits for this linter's `run` to finish on all commands, then runs. The current ref is the `eoi` token. -/
   cleanup     : CommandElabM Unit
+deriving Inhabited
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>
   unless stx.isOfKind ``Parser.Command.eoi do f stx
