@@ -20,7 +20,8 @@ structure LinterWithCleanup extends LinterWithCleanupSettings where
 def LinterWithCleanup.toLinter (l : LinterWithCleanup) (idx : Nat) : Linter where
   name    := l.name
   run stx :=
-    unless Elab.inServer.get (← getOptions) do -- Only run noninteractively.
+    -- Only run noninteractively. Assumes `Elab.inServer` is never wrong.
+    unless Elab.inServer.get (← getOptions) do
       try exceptOnEOI l.run stx finally IO.recordRange idx stx
 
 initialize lintersWithCleanupRef : IO.Ref (Array LinterWithCleanup) ← IO.mkRef #[]
