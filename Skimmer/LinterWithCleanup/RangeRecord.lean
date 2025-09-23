@@ -25,16 +25,16 @@ initialize rangeRecordsRef : IO.Ref (Array RangeBoundariesMod2) ← IO.mkRef #[]
 
 open Lean Elab Command
 
-private def Lean.Syntax.getRangeForRecordRange (stx : Syntax) (useCmdPos := false) : CommandElabM String.Range := do
-  let stop : String.Pos ← if stx.isOfKind ``Parser.Command.eoi then
-    pure 0
-  else
+def Lean.Syntax.getRangeForRecordRange! (stx : Syntax) (useCmdPos := false) : CommandElabM String.Range := do
+  let stop : String.Pos ← if stx.isOfKind ``Parser.Command.eoi then pure 0 else
     (stx.getTrailingTailPos? true).getDM <|
       panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
   let start ← if useCmdPos then pure (← read).cmdPos else
     (stx.getPos? true).getDM <|
       panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
   return ⟨start, stop⟩
+
+-- TODO: ++ `!` on both names
 
 /-- Records the range of the given syntax in the `RangeBoundariesMod2` hashset at the index `idx` of `rangeRecordsRef`. If the result is a cycle (i.e. all syntax has been processed), punches the punchcard at the same index in `punchCardsRef`.
 
@@ -46,4 +46,4 @@ def IO.recordRange (idx : Nat) (range : String.Range) : BaseIO Unit := do
 
 def Lean.Elab.Command.recordRange (idx : Nat) (stx : Syntax) (useCmdPos := false) :
     CommandElabM Unit := do
-  IO.recordRange idx <|← stx.getRangeForRecordRange useCmdPos
+  IO.recordRange idx <|← stx.getRangeForRecordRange! useCmdPos
