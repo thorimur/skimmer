@@ -34,6 +34,17 @@ def parseHeaderRaw (inputCtx : InputContext) : IO Syntax := do
   let s   := p.run inputCtx { env := dummyEnv, options := {} } tokens (mkParserState inputCtx.inputString)
   if s.stxStack.isEmpty then return .missing else return s.stxStack.back
 
+def parseHeaderRawWithLeadingWhitespace (inputCtx : InputContext) : IO (Substring × Syntax) := do
+  let dummyEnv ← mkEmptyEnvironment
+  let tokens := Module.updateTokens (getTokenTable dummyEnv)
+  letI run (p : ParserFn) (s : ParserState) := p.run inputCtx { env := dummyEnv, options := {} } tokens s
+  let ws := run whitespace (mkParserState inputCtx.inputString)
+  let whitespaceSubstring := inputCtx.substring 0 ws.pos
+  if ws.hasError then return (whitespaceSubstring, .missing) else
+  let s := run Module.header.fn ws
+  let stx := if s.stxStack.isEmpty then .missing else s.stxStack.back
+  return (whitespaceSubstring, stx)
+
 def getSourceInputContext {m} [Monad m] [MonadFileMap m] [MonadLog m] : m InputContext :=
   return {
     inputString := (← getFileMap).source
@@ -51,15 +62,15 @@ def runLintersWithCleanup : CommandElab := fun eoi =>
     -- profileitM Exception "linting" (← getOptions) do
     -- withTraceNode `Elab.lint (fun _ => return m!"running linters") do
     let ls ← lintersWithCleanupRef.get
-    let header ← parseHeaderRaw (← getSourceInputContext)
+    let (ws, header) ← parseHeaderRawWithLeadingWhitespace (← getSourceInputContext)
     unless header.isMissing do -- throw error if not?
       for h : i in 0...ls.size do
         -- what if `runOnHeader`/`runOnEOI` error?
-        if ← ls[i].runOnHeader then ls[i].runOn header
-        recordRange i header (useCmdPos := false)
+        if let some run := ls[i].runOnHeader then run ws header
+        recordRange i header (isHeader := true)
     for h : i in 0...ls.size do
       if ← ls[i].runOnEOI then ls[i].runOn eoi
-      recordRange i eoi (useCmdPos := false) -- `#guard_msgs` cannot guard `eoi`
+      recordRange i eoi
     for h : i in 0...ls.size do
       -- Note: we only check this here (as opposed to before `recordRange`s) so that we never accidentally wait indefinitely.
       if ← ls[i].shouldCleanup then

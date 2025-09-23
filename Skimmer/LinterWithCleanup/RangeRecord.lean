@@ -25,13 +25,12 @@ initialize rangeRecordsRef : IO.Ref (Array RangeBoundariesMod2) ← IO.mkRef #[]
 
 open Lean Elab Command
 
-def Lean.Syntax.getRangeForRecordRange! (stx : Syntax) (useCmdPos := false) : CommandElabM String.Range := do
+def Lean.Syntax.getRangeForRecordRange! (stx : Syntax) (isHeader := false) :
+    CommandElabM String.Range := do
   let stop : String.Pos ← if stx.isOfKind ``Parser.Command.eoi then pure 0 else
     (stx.getTrailingTailPos? true).getDM <|
       panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
-  let start ← if useCmdPos then pure (← read).cmdPos else
-    (stx.getPos? true).getDM <|
-      panic! s!"`getCurrentRangeForRecordRange` called on non-canonical syntax {stx}"
+  let start ← if isHeader then pure 0 else pure (← read).cmdPos
   return ⟨start, stop⟩
 
 -- TODO: ++ `!` on both names
@@ -44,6 +43,6 @@ def IO.recordRange (idx : Nat) (range : String.Range) : BaseIO Unit := do
     a.modifyGet idx fun rbs => let rbs := rbs.insertRange range; (rbs.isCycle, rbs)
   if isCycle then IO.punch! idx
 
-def Lean.Elab.Command.recordRange (idx : Nat) (stx : Syntax) (useCmdPos := false) :
+def Lean.Elab.Command.recordRange (idx : Nat) (stx : Syntax) (isHeader := false) :
     CommandElabM Unit := do
-  IO.recordRange idx <|← stx.getRangeForRecordRange! useCmdPos
+  IO.recordRange idx <|← stx.getRangeForRecordRange! isHeader
