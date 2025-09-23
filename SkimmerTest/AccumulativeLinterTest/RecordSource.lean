@@ -1,0 +1,69 @@
+import Skimmer.AccumulativeLinter
+
+open Lean
+
+structure TestResult where
+  module              : Name
+  reconstructedSource : String
+  source              : String
+  fragments           : Array Substring
+  equal               : Bool := reconstructedSource == source
+deriving Inhabited, Repr
+
+def Bool.toEmoji : Bool → String
+| true => checkEmoji
+| false => crossEmoji
+
+instance : ToMessageData TestResult where
+  toMessageData
+  | { module, reconstructedSource, source, equal, fragments } =>
+    m!"{equal.toEmoji}{module}" ++ if equal then .nil else
+    m!"reconstructed:
+    -----
+    {reconstructedSource}
+    -----
+    original:
+    -----
+    {source}
+    -----
+    {fragments}"
+
+initialize recordSourceLinter :
+    AccumulativeLinter TestResult TestResult (Array TestResult)
+      Substring (Array Substring) ←
+  registerAndAddAccumulativeLinter {
+    init := #[]
+    add s a := a.push s
+    mkInitial := pure #[]
+    addImportedFn := fun _ => pure #[]
+    addEntryFn := .push
+    produce? stx := do
+      let range ← stx.getRangeForRecordRange!
+      let source := (← getFileMap).source
+      return some ⟨source, range.start, range.stop⟩
+    produceOnHeader? := some fun ws stx => do
+      let range ← stx.getRangeForRecordRange! (isHeader := true)
+      let source := (← getFileMap).source
+      return some ⟨source, range.start, range.stop⟩
+    submit a := do
+      let mut reconstructedSource := ""
+      let module ← getMainModule
+      for s in a.qsort (·.startPos < ·.startPos) do
+        if reconstructedSource.endPos == s.startPos then
+          reconstructedSource := reconstructedSource ++ s.toString
+        else
+          return #[{
+            module
+            reconstructedSource
+            source := (← getFileMap).source
+            fragments := a
+          }]
+      let correct := (← getFileMap).source == reconstructedSource
+      return #[{
+        module
+        reconstructedSource
+        source := (← getFileMap).source
+        fragments := a
+      }]
+    exportEntriesFnEx _ n _ := n
+  }

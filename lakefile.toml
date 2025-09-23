@@ -5,6 +5,9 @@ defaultTargets = ["Skimmer", "write_edits"]
 [[lean_lib]]
 name = "Skimmer"
 
+[[lean_lib]]
+name = "SkimmerTest"
+
 [[lean_exe]]
 name = "write_edits"
 root = "Skimmer.Execute"
