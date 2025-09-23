@@ -29,10 +29,13 @@ structure PersistentRef (ρ κ) where
   persist : κ → Environment → Environment
 deriving Nonempty
 
-structure PersistentLinter (ρ κ) extends PersistentRef ρ κ, LinterWithCleanupSettings where
+structure PersistentLinterBase (ρ κ) extends LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
   -- !! Consider subsuming into `persist`
   extraCleanup : κ → CommandElabM κ := pure
+deriving Nonempty
+
+structure PersistentLinter (ρ κ) extends PersistentLinterBase ρ κ, PersistentRef ρ κ
 deriving Nonempty
 
 def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup :=
@@ -56,15 +59,12 @@ def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithC
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
 -/
 
-structure AccumulativeLinterDescrBase (β ρ κ) extends LinterWithCleanupSettings where
+structure AccumulativeLinterDescrBase (β ρ κ) extends PersistentLinterBase ρ κ where
   -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
   init : κ
   add : ρ → κ → κ
   -- !! Consider changing signature to be monadic if we change `persist`
   submit : κ → Array β
-  -- Linter
-  produce? : Syntax → CommandElabM (Option ρ)
-  extraCleanup : κ → CommandElabM κ := pure
 
 structure AccumulativeLinterDescr (α β σ ρ κ)
 extends AccumulativeLinterDescrBase β ρ κ, PersistentEnvExtensionDescr α β σ
@@ -109,8 +109,8 @@ def SimpleAccumulativeLinter (α β σ) := AccumulativeLinter α β σ β (Array
 instance [Inhabited σ] [Nonempty β] : Nonempty (SimpleAccumulativeLinter α β σ) :=
   ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
 
-structure SimpleAccumulativeLinterDescrBase β extends LinterWithCleanupSettings where
-  produce? : Syntax → CommandElabM (Option β)
+-- Should probably just be a `def`, but gets us a convenient projection.
+structure SimpleAccumulativeLinterDescrBase β extends PersistentLinterBase β (Array β)
 
 structure SimpleAccumulativeLinterDescr (α β σ)
 extends SimpleAccumulativeLinterDescrBase β, PersistentEnvExtensionDescr α β σ
