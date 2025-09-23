@@ -3,21 +3,22 @@ import Skimmer.LinterWithCleanup.Defs
 
 open Lean Elab Command
 
+-- TODO: make async?
 /--
 Only to be used when running linters with cleanup manually, outside of `runLinters`. Replicates loop of `runLinters`.
 
 Does *not* update the `rangeRecordsRef`.
 -/
-def LinterWithCleanup.runOn (linter : LinterWithCleanup) (stx : Syntax) : CommandElabM Unit := do
-  withTraceNode `Elab.lint (fun _ => return m!"running linter: {.ofConstName linter.name}")
-      (tag := linter.name.toString) do
+protected def CommandElab.runAsLinter (run : CommandElab) (stx : Syntax) (linterName : Name): CommandElabM Unit := do
+  withTraceNode `Elab.lint (fun _ => return m!"running linter: {.ofConstName linterName}")
+      (tag := linterName.toString) do
     let savedState ← get
     try
-      linter.run stx
+      run stx
     catch ex =>
       match ex with
       | Exception.error ref msg =>
-        logException (.error ref m!"linter {.ofConstName linter.name} failed: {msg}")
+        logException (.error ref m!"linter {.ofConstName linterName} failed: {msg}")
       | Exception.internal _ _ =>
         logException ex
     finally
@@ -66,10 +67,12 @@ def runLintersWithCleanup : CommandElab := fun eoi =>
     unless header.isMissing do -- throw error if not?
       for h : i in 0...ls.size do
         -- what if `runOnHeader`/`runOnEOI` error?
-        if let some run := ls[i].runOnHeader then run ws header
+        if let some run := ls[i].runOnHeader then
+          CommandElab.runAsLinter (run ws) header ls[i].name
         recordRange i header (isHeader := true)
     for h : i in 0...ls.size do
-      if ← ls[i].runOnEOI then ls[i].runOn eoi
+      if ← ls[i].runOnEOI then
+        CommandElab.runAsLinter ls[i].run eoi ls[i].name
       recordRange i eoi
     for h : i in 0...ls.size do
       -- Note: we only check this here (as opposed to before `recordRange`s) so that we never accidentally wait indefinitely.
