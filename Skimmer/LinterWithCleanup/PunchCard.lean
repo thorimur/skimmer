@@ -23,7 +23,7 @@ initialize punchCardBell : Std.Condvar ← Std.Condvar.new
 -- !! Should we have a global mutex like this, or make a new mutex each time we wait?
 initialize punchCardWaiter : Std.BaseMutex ← Std.BaseMutex.new
 
-def IO.waitForPunched! (idx : Nat) : BaseIO Unit :=
+def IO.waitUntilPunched! (idx : Nat) : BaseIO Unit :=
   unless (← punchCardsRef.get)[idx]!.isFinished do
     let mustWait ← punchCardsRef.modifyGet fun a =>
       match a[idx]! with
