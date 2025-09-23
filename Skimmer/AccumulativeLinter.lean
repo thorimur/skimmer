@@ -25,11 +25,14 @@ open Lean Elab Command
 structure PersistentRef (ρ κ) where
   ref     : IO.Ref κ
   add     : ρ → κ → κ
+  -- !! Consider changing signature to be monadic
   persist : κ → Environment → Environment
 deriving Nonempty
 
 structure PersistentLinter (ρ κ) extends PersistentRef ρ κ, LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
+  -- !! Consider subsuming into `persist`
+  extraCleanup : κ → CommandElabM κ := pure
 deriving Nonempty
 
 def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWithCleanup :=
@@ -39,7 +42,8 @@ def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ) : LinterWi
       l.ref.modify (l.add v)
     cleanup := do
       let k ← l.ref.get
-      modifyEnv (l.persist k)
+      let k ← l.extraCleanup k
+      modifyEnv (l.persist k) -- or use `setEnv`?
   }
 
 def addPersistentLinter (l : PersistentLinter ρ κ) : IO Unit := addLinterWithCleanup l.toLinterWithCleanup
@@ -56,6 +60,7 @@ structure AccumulativeLinterDescrBase (β ρ κ) extends LinterWithCleanupSettin
   -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
   init : κ
   add : ρ → κ → κ
+  -- !! Consider changing signature to be monadic if we change `persist`
   submit : κ → Array β
   -- Linter
   produce? : Syntax → CommandElabM (Option ρ)
