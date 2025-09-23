@@ -5,9 +5,12 @@ WIP!
 This repo provides a hierarchy of features:
 
 1. Declarations tagged with `@[cleanup]` are run at the end of every file.
-2. `Accumulator`s represent a single connection between a reflike object (such as `IO.Ref` or `Std.Mutex`) and a `PersistentEnvExtension`, such that the data in the ref is added to the extension state at the end of each file via a `@[cleanup]`. We also provide ways to construct simple examples of these.
-3. `AccumulativeLinter`s are convenient ways to specify a linter which feeds into an `Accumulator`, thus allowing it to persist data.
-4. We provide a `refactor` accumulator which can record edits from within linters.
+2. A `LinterWithCleanup` waits for itself to finish running on all declarations, then runs a `cleanup` at the end of each file. In this way, it has the potential to persist state into the environment by modifying refs. (These currently can only be run noninteractively.)
+3. `PersistentLinter`s, `AccumulativeLinter`s, and `SimpleAccumulativeLinter`s provide convenient ways to construct a `LinterWithCleanup` with an associated `IO.Ref` and `PersistentEnvExtension` through and into which state can be persisted.
+
+TODO:
+
+4. We provide a `refactor` accumulative linter which can record edits from within linters, and a `write_edits` exe which can write the recorded edits
 5. We provide an extensible way to provide both syntax- and infotree-based refactoring rules to a `refactoringLinter : AccumulativeLinter`.
 
 ### TODO:
