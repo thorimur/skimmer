@@ -1,6 +1,7 @@
 # Skimmer
 
-**WIP!**
+> [!WARNING]
+> This repo is very early in its development, and currently only intended for experimental use.
 
 This repo provides ways to *skim* the "surface" of the Lean process—linter executions and file endings—to capture and persist data which is usually ephemeral.
 
