@@ -211,10 +211,6 @@ def String.bracketRanges (text : String) (ranges : Array Syntax.Range) : String 
   out := out ++ text.replaceStart prevEndPos
   return out
 
-#eval "abaefwef wer".applyEdits #[⟨⟨0,⟨1⟩⟩, "yay"⟩]
-
-run_cmd Lean.logInfo <| toMessageData { start := 0, stop := ⟨154⟩ : Syntax.Range }
-
 instance : ToMessageData Edit where
   toMessageData e := m!"({e.range} ↦ \"{e.replacement}\")"
 
