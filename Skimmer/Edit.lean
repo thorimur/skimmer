@@ -104,6 +104,7 @@ def String.Pos.Raw.floor (s : String) (p : Pos.Raw) : s.ValidPos :=
 theorem String.Pos.Raw.floor_le (s : String) (p : Pos.Raw) : (p.floor s).offset ≤ p := by
   simp only [floor]; grind
 
+-- TODO: split into two functions, no `⊕`?
 /-- Gets the least `ValidPos` `v` of `s` such that `p ≤ v`, if there is one. -/
 @[expose, inline]
 def String.Pos.Raw.ceiling' (s : String) (p : Pos.Raw) :
@@ -135,11 +136,12 @@ def String.Pos.Raw.ceiling? (s : String) (p : Pos.Raw) : Option s.ValidPos :=
 
 /-- Gets the least `ValidPos` `v` of `s` such that `p ≤ v`, if there is one, or the end position. -/
 def String.Pos.Raw.ceiling (s : String) (p : Pos.Raw) : s.ValidPos :=
-  p.ceiling? s |>.getD s.endValidPos
+  match p.ceiling' s with
+  | .inl x | .inr x => x.val
 
 theorem String.Pos.Raw.ceiling_le_or (s : String) (p : Pos.Raw) :
     p ≤ (p.ceiling s).offset ∨ (p.ceiling s = s.endValidPos ∧ s.rawEndPos < p) := by
-  simp [ceiling, ceiling?]; grind
+  simp [ceiling]; grind
 
 def String.Slice.length (s : String.Slice) : Nat := s.foldl (init := 0) fun count _ => count + 1
 
@@ -162,6 +164,7 @@ def String.applyEditsWithTracing {m}
     (text : String) (edits : Array Edit) : m String := do
   let mut out : String := ""
   let mut prevEndPos : text.ValidPos := text.startValidPos
+  let mut successCount := 0
   for edit in edits do -- note: already sorted
     let some slice := edit.range.toSliceOf? text
       | trace[Skimmer.Edit.Error] "💥{edit.range} Invalid positions"
@@ -176,6 +179,7 @@ def String.applyEditsWithTracing {m}
         startInclusive_le_endExclusive := h : String.Slice }
       out := out ++ edit.replacement
       prevEndPos := slice.endExclusive
+      successCount := successCount + 1
     else
       trace[Skimmer.Edit.Error] "❌{edit.range} Overlaps with previous edit ending at \
         {prevEndPos.offset}\n\
@@ -184,6 +188,14 @@ def String.applyEditsWithTracing {m}
         + {repr <| out.toSlice.summarizeLast 10}"
     -- TODO: trace/error if not
   out := out ++ text.replaceStart prevEndPos
+  if successCount = edits.size then
+    trace[Skimmer.Edit] "Successfully applied all {edits.size} \
+      edit{if edits.size = 1 then "" else "s"}"
+  else
+    trace[Skimmer.Edit] "❗Failed to apply {edits.size - successCount} out of {edits.size} \
+      edit{if edits.size - successCount = 1 then "" else "s"}\n\
+      Successfully applied {successCount} out of {edits.size} \
+      edit{if edits.size - successCount = 1 then "" else "s"}"
   return out
 
 -- TODO: register traceclasses, inherit appropriately
