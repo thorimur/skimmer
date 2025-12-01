@@ -68,12 +68,19 @@ def showEdits (env : Environment) (root : Name) : IO Unit := do
       -- Mario's code:
       IO.println s!"writing {edits.size} edits to {mod} @ {path}:"
       let text ← IO.FS.readFile path
-      let mut pos : String.Pos := 0
       let mut out : String := ""
-      for edit in edits do -- already sorted
-        if pos ≤ edit.range.start then
-          out := out ++ text.extract pos edit.range.start ++ edit.replacement
-          pos := edit.range.stop
-      out := out ++ text.extract pos text.endPos
+      let mut prevEndPos : text.ValidPos := text.startValidPos
+      for edit in edits do -- note: already sorted
+        let some slice := edit.range.toSliceOf? text | continue -- TODO: trace/error
+        if h : prevEndPos ≤ slice.startInclusive then
+          out := out ++ {
+            str := text
+            startInclusive := prevEndPos
+            endExclusive := slice.startInclusive
+            startInclusive_le_endExclusive := h : String.Slice }
+          out := out ++ edit.replacement
+          prevEndPos := slice.endExclusive
+        -- TODO: trace/error if not
+      out := out ++ text.replaceStart prevEndPos
       IO.println <| s!"-----\n" ++ out ++ s!"-----"
       -- IO.FS.writeFile path out
