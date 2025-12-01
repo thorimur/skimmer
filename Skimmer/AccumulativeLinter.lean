@@ -3,7 +3,12 @@ Copyright (c) 2025 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Skimmer.LinterWithCleanup.Run
+module
+
+public import Skimmer.LinterWithCleanup.Run
+import Skimmer.LinterWithCleanup.Defs -- TODO: why is this necessary?
+
+@[expose] public section
 
 /-!
 We provide a way to construct a `LinterWithCleanup` that handles an `IO.Ref`.
@@ -36,7 +41,7 @@ deriving Nonempty
 
 structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
   produce? : Syntax → CommandElabM (Option ρ)
-  produceOnHeader? : Option (Substring → Syntax → CommandElabM (Option ρ)) := none
+  produceOnHeader? : Option (Substring.Raw → Syntax → CommandElabM (Option ρ)) := none
   submit : κ → CommandElabM ε
 deriving Nonempty
 

@@ -4,9 +4,11 @@ defaultTargets = ["Skimmer", "write_edits"]
 
 [[lean_lib]]
 name = "Skimmer"
+leanOptions = { experimental.module = true }
 
 [[lean_lib]]
 name = "SkimmerTest"
+leanOptions = { experimental.module = true }
 
 [[lean_exe]]
 name = "write_edits"

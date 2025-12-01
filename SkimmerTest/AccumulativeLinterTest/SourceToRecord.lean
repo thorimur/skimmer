@@ -4,10 +4,9 @@ Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
 /- A comment preceding the header. -/
+module
 
-import SkimmerTest.AccumulativeLinterTest.RecordSource
-
-import Lean
+public import SkimmerTest.AccumulativeLinterTest.RecordSource
 
 /-!
 ## Test

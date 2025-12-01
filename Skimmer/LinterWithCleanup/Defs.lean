@@ -3,7 +3,11 @@ Copyright (c) 2025 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Skimmer.LinterWithCleanup.RangeRecord
+module
+
+public import Skimmer.LinterWithCleanup.RangeRecord
+
+@[expose] public section
 
 open Lean Elab Command
 
@@ -18,7 +22,7 @@ structure LinterWithCleanup extends LinterWithCleanupSettings where
   run         : CommandElab
   /-- Waits for this linter's `run` to finish on all commands, then runs. The current ref is the `eoi` token. -/
   cleanup     : CommandElabM Unit
-  runOnHeader : Substring → Syntax → CommandElabM Unit
+  runOnHeader : Option (Substring.Raw → Syntax → CommandElabM Unit) := none
 deriving Inhabited
 
 @[inline] def exceptOnEOI (f : CommandElab) : CommandElab := fun stx =>

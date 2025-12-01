@@ -3,7 +3,11 @@ Copyright (c) 2025 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Skimmer.Cleanup.Attr
+module
+
+public meta import Skimmer.Cleanup.Attr
+
+@[expose] public section
 
 open Lean Elab Command Parser
 
@@ -20,7 +24,7 @@ open Lean Elab Command Parser
 --   Language.toSnapshotTree snap.val
 
 -- use scoped, erased, etc.
-def runCleanups : CommandElab := fun stx => do
+meta def runCleanups : CommandElab := fun stx => do
   let cleanupss := cleanupAttr.ext.getImportedEntries (← getEnv)
   let localCleanups := cleanupAttr.ext.getState (← getEnv)
   -- `isEmpty` check worth it instead? or just let the loop run?
@@ -50,7 +54,7 @@ def runCleanups : CommandElab := fun stx => do
 
 
 @[command_elab eoi]
-def elabEoiToCleanups : CommandElab
+meta def elabEoiToCleanups : CommandElab
 | stx@(.node _ ``Command.eoi _) => do
   -- Wait for main environment branch; this does not account for linters.
   let _ := (← getEnv).checked.get

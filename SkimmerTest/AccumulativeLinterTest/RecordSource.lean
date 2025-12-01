@@ -3,7 +3,14 @@ Copyright (c) 2025 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Skimmer.AccumulativeLinter
+module
+
+public meta import Skimmer.AccumulativeLinter
+import Skimmer.LinterWithCleanup.RangeRecord
+import Skimmer.LinterWithCleanup.Defs
+import Lean
+
+public meta section
 
 open Lean
 
@@ -11,7 +18,7 @@ structure TestResult where
   module              : Name
   reconstructedSource : String
   source              : String
-  fragments           : Array Substring
+  fragments           : Array Substring.Raw
   equal               : Bool := reconstructedSource == source
 deriving Inhabited, Repr
 
@@ -35,7 +42,7 @@ instance : ToMessageData TestResult where
 
 initialize recordSourceLinter :
     AccumulativeLinter TestResult TestResult (Array TestResult)
-      Substring (Array Substring) ←
+      Substring.Raw (Array Substring.Raw) ←
   registerAndAddAccumulativeLinter {
     init := #[]
     add s a := a.push s
@@ -54,7 +61,7 @@ initialize recordSourceLinter :
       let mut reconstructedSource := ""
       let module ← getMainModule
       for s in a.qsort (·.startPos < ·.startPos) do
-        if reconstructedSource.endPos == s.startPos then
+        if reconstructedSource.rawEndPos == s.startPos then
           reconstructedSource := reconstructedSource ++ s.toString
         else
           return #[{
@@ -63,7 +70,6 @@ initialize recordSourceLinter :
             source := (← getFileMap).source
             fragments := a
           }]
-      let correct := (← getFileMap).source == reconstructedSource
       return #[{
         module
         reconstructedSource

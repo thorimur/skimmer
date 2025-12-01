@@ -3,8 +3,13 @@ Copyright (c) 2025 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Skimmer.Cleanup.Elab
-import Skimmer.LinterWithCleanup.Defs
+module
+
+public meta import Skimmer.LinterWithCleanup.PunchCard
+public meta import Skimmer.Cleanup.Elab
+public meta import Skimmer.LinterWithCleanup.Defs
+
+@[expose] public meta section
 
 open Lean Elab Command
 
@@ -40,7 +45,7 @@ def parseHeaderRaw (inputCtx : InputContext) : IO Syntax := do
   let s   := p.run inputCtx { env := dummyEnv, options := {} } tokens (mkParserState inputCtx.inputString)
   if s.stxStack.isEmpty then return .missing else return s.stxStack.back
 
-def parseHeaderRawWithLeadingWhitespace (inputCtx : InputContext) : IO (Substring × Syntax) := do
+def parseHeaderRawWithLeadingWhitespace (inputCtx : InputContext) : IO (Substring.Raw × Syntax) := do
   let dummyEnv ← mkEmptyEnvironment
   let tokens := Module.updateTokens (getTokenTable dummyEnv)
   letI run (p : ParserFn) (s : ParserState) := p.run inputCtx { env := dummyEnv, options := {} } tokens s
