@@ -13,6 +13,7 @@ leanOptions = { experimental.module = true }
 [[lean_exe]]
 name = "write_edits"
 root = "Skimmer.Execute"
+leanOptions = { experimental.module = true }
 
 [[require]]
 name = "batteries"

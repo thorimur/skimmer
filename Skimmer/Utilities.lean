@@ -5,12 +5,12 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public import Skimmer.Extension
+public meta import Skimmer.Extension
 public import Lean
 public import Batteries
 -- TODO: reduce imports
 
-@[expose] public section
+@[expose] public meta section
 
 open Lean
 
