@@ -5,14 +5,25 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public import Skimmer.Edit
+public import Skimmer.Refactor.Edit
 public import Skimmer.AttrUtil
 
 @[expose] public section
 
 open Lean Elab Command
 
+namespace Skimmer
+
 abbrev Refactor := Syntax → CommandElabM (Array Edit)
+
+initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
+  registerPersistentEnvExtension {
+    mkInitial := pure #[]
+    addImportedFn := fun _ => pure #[]
+    addEntryFn := Array.append
+    statsFn edits := f!"{edits.size} edits"
+    exportEntriesFnEx _ edits _ := edits
+  }
 
 -- TODO: make scoped, allow erased, etc.
 initialize commandRefactorAttr : TagAttribute ← (registerTagAttribute
