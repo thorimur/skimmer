@@ -41,22 +41,23 @@ instance : ToMessageData TestResult where
     {fragments}"
 
 initialize recordSourceLinter :
-    AccumulativeLinter TestResult TestResult (Array TestResult)
-      Substring.Raw (Array Substring.Raw) ←
-  registerAndAddAccumulativeLinter {
+    AccumulativeLinter TestResult (Array TestResult) (Array TestResult)
+      Substring.Raw (Array Substring.Raw) TestResult ←
+  AccumulativeLinter.registerAndAdd {
     init := #[]
     add s a := a.push s
     mkInitial := pure #[]
     addImportedFn := fun _ => pure #[]
-    addEntryFn := .push
-    produce? stx := do
+    addEntryFn := Array.append
+    persist ext a env := ext.addEntry env a
+    produce stx := do
       let range ← stx.getRangeForRecordRange!
       let source := (← getFileMap).source
-      return some ⟨source, range.start, range.stop⟩
+      return ⟨source, range.start, range.stop⟩
     produceOnHeader? := some fun ws stx => do
       let range ← stx.getRangeForRecordRange! (isHeader := true)
       let source := (← getFileMap).source
-      return some ⟨source, range.start, range.stop⟩
+      return ⟨source, range.start, range.stop⟩
     submit a := do
       let mut reconstructedSource := ""
       let module ← getMainModule

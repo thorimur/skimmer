@@ -34,7 +34,6 @@ structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
   -- Ref
   add       : ρ → κ → κ
   shouldAdd : ρ → Bool := fun _ => true
-  persist   : ε → Environment → Environment
   -- Linter
   produce : Syntax → CommandElabM ρ
   produceOnHeader? : Option (Substring.Raw → Syntax → CommandElabM ρ) := none
@@ -42,12 +41,13 @@ structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
 
 -- why can't deriving do this?
 instance [Nonempty κ] : Nonempty (PersistentLinterBase ρ κ ε) := ⟨by
-  refine ⟨?_,?_,?_,?_,?_,?_,?_,?_⟩
+  refine ⟨?_,?_,?_,?_,?_,?_,?_⟩
   all_goals exact Classical.ofNonempty
 ⟩
 
 structure PersistentLinter (ρ κ ε) extends PersistentLinterBase ρ κ ε where
   ref : IO.Ref κ
+  persist : ε → Environment → Environment
 deriving Nonempty
 
 def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : LinterWithCleanup :=
@@ -70,14 +70,18 @@ def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : Linte
 @[inline] def addPersistentLinter (l : PersistentLinter ρ κ ε) : IO Unit :=
   addLinterWithCleanup l.toLinterWithCleanup
 
-structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterBase ρ κ ε where
+structure PersistentLinterDescrCore (ρ κ ε) extends PersistentLinterBase ρ κ ε where
   init : κ
+
+-- TODO: see if we can refactor to avoid duplication with `PersistentLinter` here.
+structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterDescrCore ρ κ ε where
+  persist : ε → Environment → Environment
 
 -- Note: could expose the ref with e.g. `registerAndAddPersistentLinterDescr` or something.
 -- But may as well just initialize it separately and include it in an `addPersistentLinterCall`.
 
 @[inline] def addPersistentLinterDescr [Inhabited κ]
-    (l : PersistentLinterDescr α β σ) : IO Unit := do
+    (l : PersistentLinterDescr ρ κ ε) : IO Unit := do
   let ref ← IO.mkRef l.init
   addPersistentLinter { l with ref }
 
@@ -85,12 +89,14 @@ structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterBase ρ κ ε
 ### AccumulativeLinter
 
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
-
-TODO: the last refactor made it impossible to write `persist` at the same time as the linter. Should change type to either accept an extension argument or something else.
 -/
 
+structure AccumulativeLinterDescrCore (α β σ ρ κ γ)
+    extends PersistentLinterDescrCore ρ κ (Array γ) where
+  persist : PersistentEnvExtension α β σ → Array γ → Environment → Environment
+
 structure AccumulativeLinterDescr (α β σ ρ κ γ)
-  extends PersistentLinterDescr ρ κ (Array γ), PersistentEnvExtensionDescr α β σ where
+    extends AccumulativeLinterDescrCore α β σ ρ κ γ, PersistentEnvExtensionDescr α β σ
 
 structure AccumulativeLinter (α β σ ρ κ γ) extends PersistentLinter ρ κ (Array γ) where
   ext : PersistentEnvExtension α β σ
@@ -101,16 +107,20 @@ instance [Inhabited σ] [Nonempty κ] [Nonempty ρ] :
 
 protected def AccumulativeLinter.registerAndAddUsingExt
     (ext : PersistentEnvExtension α β σ)
-    (a : PersistentLinterDescr ρ κ (Array γ)) : IO (AccumulativeLinter α β σ ρ κ γ) := do
+    (a : AccumulativeLinterDescrCore α β σ ρ κ γ) :
+  IO (AccumulativeLinter α β σ ρ κ γ) := do
   let ref ← IO.mkRef a.init
-  let persistentLinter : PersistentLinter ρ κ (Array γ) := { a with ref }
+  let persistentLinter : PersistentLinter ρ κ (Array γ) := { a with
+    ref
+    persist := a.persist ext
+  }
   addPersistentLinter persistentLinter
   return { persistentLinter with ext }
 
 protected def AccumulativeLinter.registerAndAdd [Inhabited σ]
     (a : AccumulativeLinterDescr α β σ ρ κ γ) : IO (AccumulativeLinter α β σ ρ κ γ) := do
   let ext ← registerPersistentEnvExtension a.toPersistentEnvExtensionDescr
-  AccumulativeLinter.registerAndAddUsingExt ext a.toPersistentLinterDescr
+  AccumulativeLinter.registerAndAddUsingExt ext a.toAccumulativeLinterDescrCore
 
 /-!
 ### SimpleAppendLinter
@@ -145,7 +155,7 @@ protected def SimpleAppendLinter.registerAndAddUsingExt
     init := #[]
     shouldAdd a := !a.isEmpty
     add := Array.append
-    persist a env := ext.addEntry env a
+    persist ext a env := ext.addEntry env a
     submit := pure
   }
   AccumulativeLinter.registerAndAddUsingExt ext l
