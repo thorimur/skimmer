@@ -29,44 +29,50 @@ initialize addPersistentLinter myPLinter
 
 open Lean Elab Command
 
--- TODO: consider rename `PersistentLinter` ↦ `StatefulLinterWithCleanup`, `AccumulativeLinter` ↦ `PersistentLinter`
-
--- Could potentially fold into `PersistentLinter`.
--- TODO: consider refactoring. As is, this structure doesn't make much sense by itself.
-structure PersistentRef (ρ κ ε) where
-  ref     : IO.Ref κ
-  add     : ρ → κ → κ
-  persist : ε → Environment → Environment
-deriving Nonempty
-
 structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
-  produce? : Syntax → CommandElabM (Option ρ)
-  produceOnHeader? : Option (Substring.Raw → Syntax → CommandElabM (Option ρ)) := none
+  name : Name := by exact decl_name%
+  -- Ref
+  add       : ρ → κ → κ
+  shouldAdd : ρ → Bool := fun _ => true
+  persist   : ε → Environment → Environment
+  -- Linter
+  produce : Syntax → CommandElabM ρ
+  produceOnHeader? : Option (Substring.Raw → Syntax → CommandElabM ρ) := none
   submit : κ → CommandElabM ε
-deriving Nonempty
 
-structure PersistentLinter (ρ κ ε) extends PersistentLinterBase ρ κ ε, PersistentRef ρ κ ε
-deriving Nonempty
+structure PersistentLinter (ρ κ ε) extends PersistentLinterBase ρ κ ε where
+  ref : IO.Ref κ
 
 def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : LinterWithCleanup :=
   { l with
     run stx := do
-      let some v ← l.produce? stx | return
-      l.ref.modify (l.add v)
+      let r ← l.produce stx
+      if l.shouldAdd r then
+        l.ref.modify (l.add r)
     runOnHeader := l.produceOnHeader?.map fun produceOnHeader =>
       fun ws stx => do
-        let some v ← produceOnHeader ws stx | return
-        l.ref.modify (l.add v)
+        let r ← produceOnHeader ws stx
+        if l.shouldAdd r then
+          l.ref.modify (l.add r)
     cleanup := do
       let k ← l.ref.get
       let e ← l.submit k
       modifyEnv (l.persist e) -- or use `setEnv`?
   }
 
-def addPersistentLinter (l : PersistentLinter ρ κ ε) : IO Unit :=
+@[inline] def addPersistentLinter (l : PersistentLinter ρ κ ε) : IO Unit :=
   addLinterWithCleanup l.toLinterWithCleanup
 
--- Include `*Descr` versions? Not really necessary, just saving an `initialize myRef`.
+structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterBase ρ κ ε where
+  init : κ
+
+-- Note: could expose the ref with e.g. `registerAndAddPersistentLinterDescr` or something.
+-- But may as well just initialize it separately and include it in an `addPersistentLinterCall`.
+
+@[inline] def addPersistentLinterDescr [Inhabited κ]
+    (l : PersistentLinterDescr α β σ) : IO Unit := do
+  let ref ← IO.mkRef l.init
+  addPersistentLinter { l with ref }
 
 /-!
 ### AccumulativeLinter
@@ -74,81 +80,64 @@ def addPersistentLinter (l : PersistentLinter ρ κ ε) : IO Unit :=
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
 -/
 
-structure AccumulativeLinterDescrBase (β ρ κ) extends PersistentLinterBase ρ κ (Array β) where
-  -- Part of what can be thought of as `PersistentRefDescr`, but we fix a factor of `persist` and leave free only the factor that yields the updates
-  init : κ
-  add : ρ → κ → κ
 
-structure AccumulativeLinterDescr (α β σ ρ κ)
-extends AccumulativeLinterDescrBase β ρ κ, PersistentEnvExtensionDescr α β σ
+structure AccumulativeLinterDescr (α β σ ρ κ γ)
+  extends PersistentLinterDescr ρ κ (Array γ), PersistentEnvExtensionDescr α β σ where
 
-structure AccumulativeLinter (α β σ ρ κ) extends PersistentLinter ρ κ (Array β) where
+structure AccumulativeLinter (α β σ ρ κ γ) extends PersistentLinter ρ κ (Array γ) where
   ext : PersistentEnvExtension α β σ
 
-instance [Inhabited σ] [Nonempty κ] [Nonempty ρ] :
-    Nonempty (AccumulativeLinter α β σ ρ κ) :=
-  ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
-
-def registerAndAddAccumulativeLinterUsingExt
+protected def AccumulativeLinter.registerAndAddUsingExt
     (ext : PersistentEnvExtension α β σ)
-    (a : AccumulativeLinterDescrBase β ρ κ) : IO (AccumulativeLinter α β σ ρ κ) := do
+    (a : PersistentLinterDescr ρ κ (Array γ)) : IO (AccumulativeLinter α β σ ρ κ γ) := do
   let ref ← IO.mkRef a.init
-  let persistentLinter : PersistentLinter ρ κ (Array β) := { a with
-    ref
-    persist bs env := Id.run do
-      if bs.isEmpty then return env else
-        let mut env := env
-        for b in bs do
-          env := ext.addEntry env b -- do we need to allow the descr to set async args?
-        return env
-  }
+  let persistentLinter : PersistentLinter ρ κ (Array γ) := { a with ref }
   addPersistentLinter persistentLinter
   return { persistentLinter with ext }
 
-def registerAndAddAccumulativeLinter [Inhabited σ]
-    (a : AccumulativeLinterDescr α β σ ρ κ) : IO (AccumulativeLinter α β σ ρ κ) := do
+protected def AccumulativeLinter.registerAndAdd [Inhabited σ]
+    (a : AccumulativeLinterDescr α β σ ρ κ γ) : IO (AccumulativeLinter α β σ ρ κ γ) := do
   let ext ← registerPersistentEnvExtension a.toPersistentEnvExtensionDescr
-  registerAndAddAccumulativeLinterUsingExt ext a.toAccumulativeLinterDescrBase
+  AccumulativeLinter.registerAndAddUsingExt ext a.toPersistentLinterDescr
 
 /-!
-### SimpleAccumulativeLinter
+### SimpleAppendLinter
 
-`SimpleAccumulativeLinter`s store values of type `β` used to update the environment extension in an `IO.Ref (Array β)`, and add the contents of the array in sequence to the extension.
+`SimpleAppendLinter`s stores an `IO.Ref (Array γ)`, and adds the contents of the array to the extension. It uses `Array.append` as opposed to arrays of arrays.
 -/
 
-def SimpleAccumulativeLinter (α β σ) := AccumulativeLinter α β σ β (Array β)
+def SimpleAppendLinter γ := AccumulativeLinter γ (Array γ) (Array γ) (Array γ) (Array γ) γ
 
-instance [Inhabited σ] [Nonempty β] : Nonempty (SimpleAccumulativeLinter α β σ) :=
-  ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
+structure SimpleAppendLinterDescr (γ) where
+  name    : Name := by exact decl_name%
+  statsFn : Array γ → Format := fun a => f!"AppendLinter {name}: {a.size} entries"
+  produce : Syntax → CommandElabM (Array γ)
 
--- Should probably just be a `def`, but gets us a convenient projection.
-structure SimpleAccumulativeLinterDescrBase β extends PersistentLinterBase β (Array β) (Array β)
+protected def SimpleAppendLinterDescr.toPersistentEnvExtensionDescr (γ)
+    (descr : SimpleAppendLinterDescr γ) :
+    PersistentEnvExtensionDescr γ (Array γ) (Array γ) where
+  name := descr.name.appendAfter "Ext"
+  statsFn := descr.statsFn
+  mkInitial := pure #[]
+  addImportedFn := fun _ => pure #[]
+  addEntryFn := Array.append
+  exportEntriesFnEx _ a _ := a
 
-structure SimpleAccumulativeLinterDescr (α β σ)
-extends SimpleAccumulativeLinterDescrBase β, PersistentEnvExtensionDescr α β σ
-
-def SimpleAccumulativeLinterDescrBase.toAccumulativeLinterDescrBase
-    (s : SimpleAccumulativeLinterDescrBase β) :
-    AccumulativeLinterDescrBase β β (Array β) :=
-  { s with
+protected def SimpleAppendLinter.registerAndAddUsingExt
+    (ext : PersistentEnvExtension γ (Array γ) (Array γ))
+    (s : SimpleAppendLinterDescr γ) :
+    IO (SimpleAppendLinter γ) :=
+  let l := { s with
     init := #[]
-    add b bs := bs.push b
+    shouldAdd a := !a.isEmpty
+    add := Array.append
+    persist a env := ext.addEntry env a
     submit := pure
   }
+  AccumulativeLinter.registerAndAddUsingExt ext l
 
-def SimpleAccumulativeLinterDescr.toAccumulativeLinterDescr
-    (s : SimpleAccumulativeLinterDescr α β σ) :
-    AccumulativeLinterDescr α β σ β (Array β) where
-  toAccumulativeLinterDescrBase := s.toAccumulativeLinterDescrBase
-  toPersistentEnvExtensionDescr := s.toPersistentEnvExtensionDescr
-
-def registerAndAddSimpleAccumulativeLinterUsingExt [Inhabited σ]
-    (ext : PersistentEnvExtension α β σ)
-    (s : SimpleAccumulativeLinterDescrBase β) :
-    IO (SimpleAccumulativeLinter α β σ) :=
-  registerAndAddAccumulativeLinterUsingExt ext s.toAccumulativeLinterDescrBase
-
-def registerAndAddSimpleAccumulativeLinter [Inhabited σ]
-    (s : SimpleAccumulativeLinterDescr α β σ) :
-    IO (SimpleAccumulativeLinter α β σ) :=
-  registerAndAddAccumulativeLinter s.toAccumulativeLinterDescr
+protected def SimpleAppendLinter.registerAndAdd [Inhabited γ]
+    (s : SimpleAppendLinterDescr γ) :
+    IO (SimpleAppendLinter γ) := do
+  let ext ← registerPersistentEnvExtension s.toPersistentEnvExtensionDescr
+  SimpleAppendLinter.registerAndAddUsingExt ext s
