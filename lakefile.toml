@@ -1,6 +1,6 @@
 name = "Skimmer"
 version = "0.1.0"
-defaultTargets = ["Skimmer", "write_edits"]
+defaultTargets = ["Skimmer", "SkimmerTest", "write_edits"]
 
 [[lean_lib]]
 name = "Skimmer"
@@ -9,6 +9,7 @@ leanOptions = { experimental.module = true }
 [[lean_lib]]
 name = "SkimmerTest"
 leanOptions = { experimental.module = true }
+globs = ["SkimmerTest.+"]
 
 [[lean_exe]]
 name = "write_edits"
