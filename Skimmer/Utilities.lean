@@ -236,7 +236,7 @@ elab "#test" doc:docComment : command => do
         pos := pos.next map.source
       pure a
     logInfo m!"poses := {poses}"
-    let newMap := (map.source.applyEdits edits.sortEdits).toFileMap
+    let newMap := (map.source.applyEdits edits.qsortOrd).toFileMap
     logInfo m!"{newMap.getLineContents firstLine lastLine}"
 
 
