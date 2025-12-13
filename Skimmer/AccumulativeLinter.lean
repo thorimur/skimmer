@@ -85,6 +85,8 @@ structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterBase ρ κ ε
 ### AccumulativeLinter
 
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
+
+TODO: the last refactor made it impossible to write `persist` at the same time as the linter. Should change type to either accept an extension argument or something else.
 -/
 
 structure AccumulativeLinterDescr (α β σ ρ κ γ)
