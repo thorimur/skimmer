@@ -12,9 +12,9 @@ public import Batteries
 
 @[expose] public meta section
 
-open Lean
+open Lean Skimmer
 
-def Edit.delete (range : Syntax.Range) : Edit where
+def Skimmer.Edit.delete (range : Syntax.Range) : Edit where
   range
   replacement := ""
 
