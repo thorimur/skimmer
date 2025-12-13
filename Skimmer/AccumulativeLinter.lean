@@ -40,8 +40,15 @@ structure PersistentLinterBase ρ κ ε extends LinterWithCleanupSettings where
   produceOnHeader? : Option (Substring.Raw → Syntax → CommandElabM ρ) := none
   submit : κ → CommandElabM ε
 
+-- why can't deriving do this?
+instance [Nonempty κ] : Nonempty (PersistentLinterBase ρ κ ε) := ⟨by
+  refine ⟨?_,?_,?_,?_,?_,?_,?_,?_⟩
+  all_goals exact Classical.ofNonempty
+⟩
+
 structure PersistentLinter (ρ κ ε) extends PersistentLinterBase ρ κ ε where
   ref : IO.Ref κ
+deriving Nonempty
 
 def PersistentLinter.toLinterWithCleanup (l : PersistentLinter ρ κ ε) : LinterWithCleanup :=
   { l with
@@ -80,12 +87,15 @@ structure PersistentLinterDescr (ρ κ ε) extends PersistentLinterBase ρ κ ε
 `AccumulativeLinter`s are `PersistentLinter`s which `persist` their data by feeding into a `PersistentEnvExtension`.
 -/
 
-
 structure AccumulativeLinterDescr (α β σ ρ κ γ)
   extends PersistentLinterDescr ρ κ (Array γ), PersistentEnvExtensionDescr α β σ where
 
 structure AccumulativeLinter (α β σ ρ κ γ) extends PersistentLinter ρ κ (Array γ) where
   ext : PersistentEnvExtension α β σ
+
+instance [Inhabited σ] [Nonempty κ] [Nonempty ρ] :
+    Nonempty (AccumulativeLinter α β σ ρ κ γ) :=
+  ⟨{ toPersistentLinter := Classical.ofNonempty, ext := Classical.ofNonempty }⟩
 
 protected def AccumulativeLinter.registerAndAddUsingExt
     (ext : PersistentEnvExtension α β σ)
@@ -107,6 +117,8 @@ protected def AccumulativeLinter.registerAndAdd [Inhabited σ]
 -/
 
 def SimpleAppendLinter γ := AccumulativeLinter γ (Array γ) (Array γ) (Array γ) (Array γ) γ
+
+deriving instance Nonempty for SimpleAppendLinter
 
 structure SimpleAppendLinterDescr (γ) where
   name    : Name := by exact decl_name%

@@ -29,8 +29,17 @@ def Lean.Syntax.Range.cmp (r₁ r₂ : Syntax.Range) : Ordering :=
 def Skimmer.Edit.cmp (e₁ e₂ : Edit) : Ordering :=
   e₁.range.cmp e₂.range
 
-@[inline] def Array.sortEdits (edits : Array Edit) : Array Edit :=
-  edits.qsort fun e₁ e₂ => e₁.cmp e₂ |>.isLT
+instance : Ord Edit where compare := Edit.cmp
+
+/-- The extension holding all edits produced by any refactor. -/
+initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
+  registerPersistentEnvExtension {
+    mkInitial := pure #[]
+    addImportedFn := fun _ => pure #[]
+    addEntryFn := Array.append
+    statsFn edits := f!"{edits.size} edits"
+    exportEntriesFnEx _ edits _ := edits.qsortOrd
+  }
 
 instance : ToMessageData Syntax.Range where
   toMessageData range := m!"({range.start}:{range.stop})"

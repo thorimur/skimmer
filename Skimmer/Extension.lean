@@ -5,23 +5,13 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public import Skimmer.Edit
+public import Skimmer.Refactor.Edit
 public import Skimmer.AttrUtil
+public import Skimmer.Refactor.Init
 
 @[expose] public section
 
-open Lean
-
-initialize editExt : PersistentEnvExtension Edit (List Edit) (List Edit) ←
-  registerPersistentEnvExtension {
-    mkInitial       := pure {}
-    addImportedFn   := fun _ _ => pure {}
-    addEntryFn      := fun edits es => es ++ edits
-    exportEntriesFn := fun edits => edits.toArray.sortEdits
-    statsFn         := fun s => "edits added: " ++ f!"{repr s}"
-    asyncMode       := .sync -- hmm
-    replay?         := none
-  }
+open Lean Skimmer
 
 @[inline] def Lean.Environment.getModuleName (env : Environment) (idx : Nat) :
     Option Name := env.header.modules[idx]?.map (·.module)
