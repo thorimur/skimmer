@@ -32,6 +32,7 @@ def Skimmer.Edit.cmp (e₁ e₂ : Edit) : Ordering :=
 instance : Ord Edit where compare := Edit.cmp
 
 /-- The extension holding all edits produced by any refactor. -/
+-- TODO: we might also want to hold failures/errors/"uncertain edits" which need approval here.
 initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
   registerPersistentEnvExtension {
     mkInitial := pure #[]

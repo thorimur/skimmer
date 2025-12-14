@@ -17,6 +17,8 @@ namespace Skimmer
 
 namespace Command
 
+-- TODO: currently a `Refactor` is literally just a linter that, instead of producing a `CommandElabM Unit`, produces a `CommandElabM (Array Edit)`.
+-- In the future it might make sense to give it more arguments or fields (e.g. for running in different contexts, such as during an infotree traversal), or even change `CommandElabM` to something like `SkimmerM` that provides more state (such as the prior environment).
 structure Refactor where
   name : Name := by exact decl_name%
   run : Syntax → CommandElabM (Array Edit)
