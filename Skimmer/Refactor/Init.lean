@@ -5,11 +5,12 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public import Skimmer.Refactor.Edit
+public meta import Skimmer.Refactor.Edit
 public import Skimmer.AttrUtil
-public import Skimmer.LinterWithCleanup.Run
-public import Skimmer.AccumulativeLinter
-public section
+public meta import Skimmer.LinterWithCleanup.Run
+public meta import Skimmer.AccumulativeLinter
+
+public meta section
 
 open Lean Elab Command
 
@@ -27,6 +28,9 @@ deriving Inhabited
 /-- We use a linter-like model to make it easier to load these as plugins and access them during linting. -/
 initialize refactorsRef : IO.Ref (Array Refactor) ← IO.mkRef #[]
 
+def addRefactor (r : Refactor) : IO Unit :=
+  refactorsRef.modify (·.push r)
+
 /-- Basically a carbon-copy of `runLinters`. -/
 def runRefactors (stx : Syntax) : CommandElabM (Array Edit) := do
   profileitM Exception "refactoring" (← getOptions) do
@@ -43,8 +47,8 @@ def runRefactors (stx : Syntax) : CommandElabM (Array Edit) := do
                 (fun _ => return m!"running refactor: {.ofConstName refactor.name}")
                 (tag := refactor.name.toString) do
               -- don't trace yet in case it mysteriously affects performance somehow
-              -- trace[Skimmer.Refactor] "Recorded {edits.size} edit(s):\n{edits}"
               let edits ← refactor.run stx
+              trace[Skimmer.Refactor] "Recorded {edits.size} edit(s):\n{edits}"
               pure edits
 
             unless edits.isEmpty do
@@ -59,6 +63,8 @@ def runRefactors (stx : Syntax) : CommandElabM (Array Edit) := do
           finally
             modify fun s => { savedState with messages := s.messages, traceState := s.traceState }
         return allEdits
+
+initialize registerTraceClass `Skimmer.Refactor
 
 /-- Runs all refactors. -/
 initialize refactorLinter : SimpleAppendLinter Edit ←
