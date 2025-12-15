@@ -2,9 +2,12 @@ module
 
 public import Lean
 
-open Lean Linter
+open Lean Elab Term Linter
 
-/-! # Utilities for inspecting things -/
+/-! # Utilities for showing metaprogramming information
+
+-- TODO: environment, tactic states, terms, better infotree selection, widgets? etc.
+-/
 
 public meta section
 
@@ -32,13 +35,39 @@ register_option inspect.syntax.repr : Bool := {
   descr := "Display syntax using `Repr`."
 }
 
+/-- Show positions when formatting syntax. Only applies if `inspect.syntax.repr` is `false`. -/
+register_option inspect.syntax.pos : Bool := {
+  defValue := false
+  descr := "Display syntax positions."
+}
+
 -- TODO: use `withSetOptionIn` when `#11313` lands.
+-- TODO: single `logInfo`? prefix?
 def inspectLinter : Linter where
   run stx := do
     if ← getBoolOption `inspect.syntax <||> getBoolOption `inspect then
       if ← getBoolOption `inspect.syntax.repr then
         logInfo m!"{repr stx}"
+      else if ← getBoolOption `inspect.syntax.pos then
+        logInfo m!"{stx.formatStx (showInfo := true)}"
       else
-        logInfo m!"{stx}"
-    if ← getBoolOption `inspect.syntax <||> getBoolOption `inspect then
-      pure () -- TODO
+        logInfo m!"{format stx}"
+    if ← getBoolOption `inspect.info <||> getBoolOption `inspect then
+      for t in ← getInfoTrees do
+        logInfo (← t.format)
+
+initialize addLinter inspectLinter
+
+/-! # `#view`
+
+This simply makes looking at the syntax of terms a little easier.
+-/
+
+syntax (name := i) "#view " term : command
+
+open Command in
+@[command_elab i]
+def elabView : CommandElab
+  | `(i| #view $t:term) => discard <| liftTermElabM <|
+    withoutErrToSorry <| withSynthesize <| elabTerm t none
+  | _ => throwUnsupportedSyntax
