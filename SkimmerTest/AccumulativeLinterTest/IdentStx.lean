@@ -13,59 +13,94 @@ set_option inspect true
 def Nat.c : Nat := 3
 def Nat.foo : Nat → Nat := fun _ => 3
 
+local_linter foo := fun _ => do
+  for t in ← Lean.Elab.getInfoTrees do
+    let acc := t.foldInfo (init := #[]) fun _ info acc => Id.run do
+      let .ofTermInfo ti := info | return acc
+      if ti.expr.isConstOf ``Nat.add then return acc.push ti.stx else return acc
+    Lean.logInfo m!"{repr acc}"
+
 -- ident
 -- stx: single ident
--- info: `term[elabIdent|a.b] >- term[a], .. term[b]`
+-- info: `term[elabIdent|a.b] >- term[a], .. term[b]`; `.` ⊄ range (for either)
 /--
 info: (i "#view" `Nat.c.add)
 ---
-info: • [Command] @ ⟨30, 0⟩-⟨30, 15⟩ @ elabView
-  • [Term] Nat.c.add : Nat → Nat @ ⟨30, 6⟩-⟨30, 15⟩ @ Lean.Elab.Term.elabIdent
-    • [Completion-Id] Nat.c.add : none @ ⟨30, 6⟩-⟨30, 15⟩
-    • [Term] Nat.c : Nat @ ⟨30, 6⟩-⟨30, 11⟩
-    • [Completion-Dot] [Term] Nat.c : Nat @ ⟨30, 12⟩-⟨30, 15⟩ : none
-    • [Term] Nat.add : Nat → Nat → Nat @ ⟨30, 12⟩-⟨30, 15⟩
+info: • [Command] @ ⟨50, 0⟩-⟨50, 15⟩ @ elabView
+  • [Term] Nat.c.add : Nat → Nat @ ⟨50, 6⟩-⟨50, 15⟩ @ Lean.Elab.Term.elabIdent
+    • [Completion-Id] Nat.c.add : none @ ⟨50, 6⟩-⟨50, 15⟩
+    • [Term] Nat.c : Nat @ ⟨50, 6⟩-⟨50, 11⟩
+    • [Completion-Dot] [Term] Nat.c : Nat @ ⟨50, 12⟩-⟨50, 15⟩ : none
+    • [Term] Nat.add : Nat → Nat → Nat @ ⟨50, 12⟩-⟨50, 15⟩
+---
+info: #[Lean.Syntax.node
+    (Lean.SourceInfo.none)
+    `Lean.Parser.Term.identProj
+    #[Lean.Syntax.ident
+        (Lean.SourceInfo.original
+          "".toRawSubstring
+          { byteIdx := 1640 }
+          "\n\n\n\n-- proj\n-- stx: `Term.proj #[_, \".\", id]`\n-- info: `term[elabProj|e] >- term[e]`; `.` ⊄ e.range\n-- Note that the syntax in the infotree is `identProj #[id]`\n".toRawSubstring
+          { byteIdx := 1643 })
+        "add".toRawSubstring
+        `add
+        []]]
 -/
 #guard_msgs in
 #view Nat.c.add
 
-
 -- proj
 -- stx: `Term.proj #[_, ".", id]`
--- info: `term[elabProj|e] >- term[e]`
+-- info: `term[elabProj|e] >- term[e]`; `.` ⊄ e.range
+-- Note that the syntax in the infotree is `identProj #[id]`
 /--
 info: (i "#view" (Term.proj (Term.paren (Term.hygienicLParen "(" (hygieneInfo `[anonymous])) (num "3") ")") "." `add))
 ---
-info: • [Command] @ ⟨51, 0⟩-⟨51, 13⟩ @ elabView
-  • [Term] Nat.add 3 : Nat → Nat @ ⟨51, 6⟩-⟨51, 13⟩ @ Lean.Elab.Term.elabProj
-    • [Term] 3 : Nat @ ⟨51, 6⟩-⟨51, 9⟩ @ Lean.Elab.Term.expandParen
+info: • [Command] @ ⟨86, 0⟩-⟨86, 13⟩ @ elabView
+  • [Term] Nat.add 3 : Nat → Nat @ ⟨86, 6⟩-⟨86, 13⟩ @ Lean.Elab.Term.elabProj
+    • [Term] 3 : Nat @ ⟨86, 6⟩-⟨86, 9⟩ @ Lean.Elab.Term.expandParen
       • [MacroExpansion]
         (3)
         ===>
         3
-        • [Term] 3 : Nat @ ⟨51, 7⟩-⟨51, 8⟩ @ Lean.Elab.Term.elabNumLit
-    • [Completion-Dot] [Term] 3 : Nat @ ⟨51, 10⟩-⟨51, 13⟩ : some ?_uniq.38
-    • [Term] Nat.add : Nat → Nat → Nat @ ⟨51, 10⟩-⟨51, 13⟩
+        • [Term] 3 : Nat @ ⟨86, 7⟩-⟨86, 8⟩ @ Lean.Elab.Term.elabNumLit
+    • [Completion-Dot] [Term] 3 : Nat @ ⟨86, 10⟩-⟨86, 13⟩ : some ?_uniq.9849
+    • [Term] Nat.add : Nat → Nat → Nat @ ⟨86, 10⟩-⟨86, 13⟩
+---
+info: #[Lean.Syntax.node
+    (Lean.SourceInfo.none)
+    `Lean.Parser.Term.identProj
+    #[Lean.Syntax.ident
+        (Lean.SourceInfo.original
+          "".toRawSubstring
+          { byteIdx := 2933 }
+          "\n\n-- dotIdent (`.c`)\n-- stx: `Term.dotIdent #[\".\", id]`\n-- info: `term[elabDotIdent|e] >- term[e]`; `.` ⊆ range [!]\n".toRawSubstring
+          { byteIdx := 2936 })
+        "add".toRawSubstring
+        `add
+        []]]
 -/
 #guard_msgs in
 #view (3).add
 
 -- dotIdent (`.c`)
 -- stx: `Term.dotIdent #[".", id]`
--- info: `term[elabDotIdent|e] >- term[e]`
+-- info: `term[elabDotIdent|e] >- term[e]`; `.` ⊆ range [!]
 /--
 info: (i
  "#view"
  (Term.typeAscription (Term.hygienicLParen "(" (hygieneInfo `[anonymous])) (Term.dotIdent "." `c) ":" [`Nat] ")"))
 ---
-info: • [Command] @ ⟨71, 0⟩-⟨71, 16⟩ @ elabView
-  • [Term] Nat.c : Nat @ ⟨71, 6⟩-⟨71, 16⟩ @ Lean.Elab.Term.elabTypeAscription
-    • [Term] Nat : Type @ ⟨71, 12⟩-⟨71, 15⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat : some Sort.{?_uniq.71} @ ⟨71, 12⟩-⟨71, 15⟩
-      • [Term] Nat : Type @ ⟨71, 12⟩-⟨71, 15⟩
-    • [Term] Nat.c : Nat @ ⟨71, 7⟩-⟨71, 9⟩ @ Lean.Elab.Term.elabDotIdent
-      • [Completion] `c @ ⟨71, 8⟩-⟨71, 9⟩
-      • [Term] Nat.c : Nat @ ⟨71, 7⟩-⟨71, 9⟩
+info: • [Command] @ ⟨81, 0⟩-⟨81, 16⟩ @ elabView
+  • [Term] Nat.c : Nat @ ⟨81, 6⟩-⟨81, 16⟩ @ Lean.Elab.Term.elabTypeAscription
+    • [Term] Nat : Type @ ⟨81, 12⟩-⟨81, 15⟩ @ Lean.Elab.Term.elabIdent
+      • [Completion-Id] Nat : some Sort.{?_uniq.10413} @ ⟨81, 12⟩-⟨81, 15⟩
+      • [Term] Nat : Type @ ⟨81, 12⟩-⟨81, 15⟩
+    • [Term] Nat.c : Nat @ ⟨81, 7⟩-⟨81, 9⟩ @ Lean.Elab.Term.elabDotIdent
+      • [Completion] `c @ ⟨81, 8⟩-⟨81, 9⟩
+      • [Term] Nat.c : Nat @ ⟨81, 7⟩-⟨81, 9⟩
+---
+info: #[]
 -/
 #guard_msgs in
 #view (.c : Nat)
@@ -88,15 +123,17 @@ info: (i
   [`Nat]
   ")"))
 ---
-info: • [Command] @ ⟨102, 0⟩-⟨102, 20⟩ @ elabView
-  • [Term] Nat.foo 4 : Nat @ ⟨102, 6⟩-⟨102, 20⟩ @ Lean.Elab.Term.elabTypeAscription
-    • [Term] Nat : Type @ ⟨102, 16⟩-⟨102, 19⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat : some Sort.{?_uniq.72} @ ⟨102, 16⟩-⟨102, 19⟩
-      • [Term] Nat : Type @ ⟨102, 16⟩-⟨102, 19⟩
-    • [Term] Nat.foo 4 : Nat @ ⟨102, 7⟩-⟨102, 13⟩ @ Lean.Elab.Term.elabApp
-      • [Completion] `foo @ ⟨102, 8⟩-⟨102, 11⟩
-      • [Term] Nat.foo : Nat → Nat @ ⟨102, 7⟩-⟨102, 11⟩
-      • [Term] 4 : Nat @ ⟨102, 12⟩-⟨102, 13⟩ @ Lean.Elab.Term.elabNumLit
+info: • [Command] @ ⟨112, 0⟩-⟨112, 20⟩ @ elabView
+  • [Term] Nat.foo 4 : Nat @ ⟨112, 6⟩-⟨112, 20⟩ @ Lean.Elab.Term.elabTypeAscription
+    • [Term] Nat : Type @ ⟨112, 16⟩-⟨112, 19⟩ @ Lean.Elab.Term.elabIdent
+      • [Completion-Id] Nat : some Sort.{?_uniq.10414} @ ⟨112, 16⟩-⟨112, 19⟩
+      • [Term] Nat : Type @ ⟨112, 16⟩-⟨112, 19⟩
+    • [Term] Nat.foo 4 : Nat @ ⟨112, 7⟩-⟨112, 13⟩ @ Lean.Elab.Term.elabApp
+      • [Completion] `foo @ ⟨112, 8⟩-⟨112, 11⟩
+      • [Term] Nat.foo : Nat → Nat @ ⟨112, 7⟩-⟨112, 11⟩
+      • [Term] 4 : Nat @ ⟨112, 12⟩-⟨112, 13⟩ @ Lean.Elab.Term.elabNumLit
+---
+info: #[]
 -/
 #guard_msgs in
 #view (.foo 4 : Nat)
@@ -106,11 +143,13 @@ info: • [Command] @ ⟨102, 0⟩-⟨102, 20⟩ @ elabView
 /--
 info: (i "#view" (Term.app `Nat.foo [(num "4")]))
 ---
-info: • [Command] @ ⟨116, 0⟩-⟨116, 15⟩ @ elabView
-  • [Term] Nat.foo 4 : Nat @ ⟨116, 6⟩-⟨116, 15⟩ @ Lean.Elab.Term.elabApp
-    • [Completion-Id] Nat.foo : none @ ⟨116, 6⟩-⟨116, 13⟩
-    • [Term] Nat.foo : Nat → Nat @ ⟨116, 6⟩-⟨116, 13⟩
-    • [Term] 4 : Nat @ ⟨116, 14⟩-⟨116, 15⟩ @ Lean.Elab.Term.elabNumLit
+info: • [Command] @ ⟨126, 0⟩-⟨126, 15⟩ @ elabView
+  • [Term] Nat.foo 4 : Nat @ ⟨126, 6⟩-⟨126, 15⟩ @ Lean.Elab.Term.elabApp
+    • [Completion-Id] Nat.foo : none @ ⟨126, 6⟩-⟨126, 13⟩
+    • [Term] Nat.foo : Nat → Nat @ ⟨126, 6⟩-⟨126, 13⟩
+    • [Term] 4 : Nat @ ⟨126, 14⟩-⟨126, 15⟩ @ Lean.Elab.Term.elabNumLit
+---
+info: #[]
 -/
 #guard_msgs in
 #view Nat.foo 4
@@ -120,16 +159,56 @@ info: • [Command] @ ⟨116, 0⟩-⟨116, 15⟩ @ elabView
 /--
 info: (i "#view" (Term.app `Nat.foo [`Nat.c]))
 ---
-info: • [Command] @ ⟨132, 0⟩-⟨132, 19⟩ @ elabView
-  • [Term] Nat.c.foo : Nat @ ⟨132, 6⟩-⟨132, 19⟩ @ Lean.Elab.Term.elabApp
-    • [Completion-Id] Nat.foo : none @ ⟨132, 6⟩-⟨132, 13⟩
-    • [Term] Nat.foo : Nat → Nat @ ⟨132, 6⟩-⟨132, 13⟩
-    • [Term] Nat.c : Nat @ ⟨132, 14⟩-⟨132, 19⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat.c : some Nat @ ⟨132, 14⟩-⟨132, 19⟩
-      • [Term] Nat.c : Nat @ ⟨132, 14⟩-⟨132, 19⟩
+info: • [Command] @ ⟨142, 0⟩-⟨142, 19⟩ @ elabView
+  • [Term] Nat.c.foo : Nat @ ⟨142, 6⟩-⟨142, 19⟩ @ Lean.Elab.Term.elabApp
+    • [Completion-Id] Nat.foo : none @ ⟨142, 6⟩-⟨142, 13⟩
+    • [Term] Nat.foo : Nat → Nat @ ⟨142, 6⟩-⟨142, 13⟩
+    • [Term] Nat.c : Nat @ ⟨142, 14⟩-⟨142, 19⟩ @ Lean.Elab.Term.elabIdent
+      • [Completion-Id] Nat.c : some Nat @ ⟨142, 14⟩-⟨142, 19⟩
+      • [Term] Nat.c : Nat @ ⟨142, 14⟩-⟨142, 19⟩
+---
+info: #[]
 -/
 #guard_msgs in
 #view Nat.foo Nat.c
+
+-- `elabExplicit` is similar.
+
+/--
+info: (i "#view" (Term.explicit "@" `Nat.foo))
+---
+info: • [Command] @ ⟨155, 0⟩-⟨155, 14⟩ @ elabView
+  • [Term] Nat.foo : Nat → Nat @ ⟨155, 6⟩-⟨155, 14⟩ @ Lean.Elab.Term.elabExplicit
+    • [Completion-Id] Nat.foo : none @ ⟨155, 7⟩-⟨155, 14⟩
+    • [Term] Nat.foo : Nat → Nat @ ⟨155, 7⟩-⟨155, 14⟩
+---
+info: #[]
+-/
+#guard_msgs in
+#view @Nat.foo
+
+
+/--
+info: (i "#view" (Term.pipeProj `Nat.c "|>." `add []))
+---
+info: • [Command] @ ⟨176, 0⟩-⟨176, 18⟩ @ elabView
+  • [Term] Nat.c.add : Nat → Nat @ ⟨176, 6⟩-⟨176, 18⟩ @ Lean.Elab.Term.elabPipeProj
+    • [Completion-Id] Nat.c : none @ ⟨176, 6⟩-⟨176, 11⟩
+    • [Term] Nat.c : Nat @ ⟨176, 6⟩-⟨176, 11⟩
+    • [Completion-Dot] [Term] Nat.c : Nat @ ⟨176, 15⟩-⟨176, 18⟩ : none
+    • [Term] Nat.add : Nat → Nat → Nat @ ⟨176, 15⟩-⟨176, 18⟩
+---
+info: #[Lean.Syntax.node
+    (Lean.SourceInfo.none)
+    `Lean.Parser.Term.identProj
+    #[Lean.Syntax.ident
+        (Lean.SourceInfo.original "".toRawSubstring { byteIdx := 6686 } "\n\n".toRawSubstring { byteIdx := 6689 })
+        "add".toRawSubstring
+        `add
+        []]]
+-/
+#guard_msgs in
+#view Nat.c |>.add
 
 /--
 warning: This simp argument is unused:
