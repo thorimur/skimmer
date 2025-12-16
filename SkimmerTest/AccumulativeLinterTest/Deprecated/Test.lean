@@ -1,7 +1,9 @@
 module
 
+import Skimmer.Refactor.Util.Ident -- TODO: use plugin instead
+
+-- import deprecated decls:
 import SkimmerTest.AccumulativeLinterTest.Deprecated.Basic
-import Skimmer.Refactor.Util.Ident -- TODO: make unnecessary via plugin
 
 example : Nat := .constFoo
 

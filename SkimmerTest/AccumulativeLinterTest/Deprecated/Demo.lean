@@ -17,7 +17,7 @@ local elab "#show_edits_demo" : command => do
   let file ← IO.FS.readFile "/Users/thomas/LeanContribution/skimmer/SkimmerTest/AccumulativeLinterTest/Deprecated/Test.lean"
 
   let newFile := file.applyEdits edits
-  logInfo m!"{newFile}"
-  IO.FS.writeFile "/Users/thomas/LeanContribution/skimmer/SkimmerTest/AccumulativeLinterTest/Deprecated/TestModified.lean" newFile
+  -- logInfo m!"{newFile}"
+  IO.FS.writeFile "/Users/thomas/LeanContribution/skimmer/SkimmerTest/AccumulativeLinterTest/Deprecated/Test.lean" newFile
 
 #show_edits_demo
