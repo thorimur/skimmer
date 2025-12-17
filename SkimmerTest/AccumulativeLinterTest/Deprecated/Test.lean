@@ -12,3 +12,5 @@ example : Nat := .foo .constFoo
 example : Nat := Nat.constFoo
 
 example : Nat := Nat.constFoo.foo
+
+example : Nat := Nat.constFoo |>.foo
