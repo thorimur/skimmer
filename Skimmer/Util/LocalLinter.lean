@@ -23,13 +23,8 @@ elab_rules : command
     elabTermEnsuringType code (Expr.const ``CommandElab [])
   -- TODO: investigate why `local_linter foo := fun` reaches unreachable code;
   -- this is a hack that prevents that.
-  let hasSorry ← do
-    let some (const,_) := val.getAppFn.const? | pure false
-    let c ← getConstInfo const
-    match c.value? with
-    | none => pure false
-    | some a => pure a.hasSorry
-  if hasSorry then return
+  let axioms ← val.getUsedConstants.mapM collectAxioms
+  if axioms.any (·.contains ``sorryAx) then return
 
   let name := mkPrivateName (← getEnv) <| name.getId ++ `localLinter
    -- TODO: correct `checkMeta`?
