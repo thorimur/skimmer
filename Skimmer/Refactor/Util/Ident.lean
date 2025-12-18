@@ -58,11 +58,35 @@ First, we must ensure they're of the same type...sort of.
     `Foo.String.join` d(new)-> `Foo.Strang.join`.
   - note that we should avoid locals.
 
+- Other concerns
+  - Need to handle `alias`es, `protected` and `export`ed decls.
+    - Need to handle the case where this changes from old to new decl.
+    - Need to potentially both respect **and modify** `export` commands
+    - Note: there are two notions of aliases in Lean. One is internal, used by `export` (anything else?); one is the command `alias`, which does not use the internal `alias` at all.
+  - Need to modify namespaces sometimes.
+  - Do we need to handle preresolved names? When do those appear, and when might a rename affect that?
+  - Need to handle `@`? Does that change name resolution
+  - Metaprogramming: Qq, syntax quotations. Worse: changing the name of a syntax category!
+  - Ideally the deprecation case is just a matter of feeding a "name converter" `Name → CommandElabM (Option NameInfo)` to some more general infrastructure. For simple renames we can have a
+  ```
+  def Name.replaceWith (old new : Name) : Name → CommandElabM (Option NameInfo) := fun n =>
+    if n == old then return some new else return none
+  ```
+  - Likewise presumably we generalize over prior parametric updates to expected type, scopes, and new "name facts". However, I think we might need to produce these new name facts in a `NameInfo` sometimes. These are facts like `protected`
+
 - Handling markers
   - The actual `Name` in an `Expr.const` when private is something like `_private.<mod>.0.<name_we_care_about>`. See `Name.privateToUserName`.
   - Again, `unresolve` is interesting. Note that we have access to the local context via term info.
 
 Note: a recreated frontend would actually make things easier in this specific case. We could just reset everything and re-elaborate...filemap things and basic operations like getting the correct syntax range might be awkward, though.
+
+- Useful
+  - `unresolveNameGlobal(AvoidingLocals)`
+  - `resolveNameUsingNamespaces`, and `Lena.Elab.OpenDecl.State`?
+  - The potential field names yielded by `resolveGlobalName` (part of `resolveGlobalConst` etc.) are interesting.
+  - Reference:
+    - `addLValArgs` for dot notation
+    - `elabApp`
 -/
 
 
