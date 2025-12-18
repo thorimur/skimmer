@@ -19,8 +19,6 @@ syntax "local_linter " localLinterArgs : command
 
 syntax "local_linter?" : command
 
-#eval true
-
 open Parser.Command in
 elab_rules : command
 | `(command| local_linter $id:ident $val:declVal) => unsafe liftTermElabM <| do
