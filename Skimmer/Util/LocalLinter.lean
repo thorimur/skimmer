@@ -15,8 +15,16 @@ syntax localLinterDef := ident declVal
 syntax localLinterClear := &"clear " (&"all" <|> ident)
 syntax localLinterArgs := localLinterClear <|> localLinterDef
 
-syntax "local_linter " localLinterArgs : command
+/--
+`local_linter foo := fun stx => do ...` activates a linter on the current file. Note that the `declVal` is interpreted as the `run : CommandElab (:= Syntax → CommandElabM Unit)` field of a `Linter`, not a `Linter` declaration itself. All `declVal` syntax is allowed, such as match alts (``local_linter foo | `(command| ...) => ...``), `let rec`s and trailing `where`s.
 
+`local_linter`s will persist even if the `local_linter` command is removed. Use `local_linter clear foo` or `local_linter clear all` to clear local linters.
+
+To list which local linters are active, use `local_linter?`.
+-/
+syntax (name := localLinter) "local_linter " localLinterArgs : command
+
+@[inherit_doc localLinter]
 syntax "local_linter?" : command
 
 open Parser.Command in
@@ -26,7 +34,7 @@ elab_rules : command
   let tempRunName := name ++ `run
   let type : Expr := mkConst ``CommandElab
   -- Instead of elaborating directly into an `Expr`, we use `#eval`'s approach to allow `let rec`s.
-  let defView := mkDefViewOfDef { visibility := .private } <|←
+  let defView := mkDefViewOfDef { isUnsafe := true, visibility := .private } <|←
     `(definition| def $(mkIdentFrom id (`_root_ ++ tempRunName)) : $(← Term.exprToSyntax type) $val:declVal)
   -- Allow access to both `meta` and non-`meta` declarations as the compilation result does not
   -- escape the current module.
