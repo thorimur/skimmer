@@ -63,11 +63,17 @@ initialize addLinter inspectLinter
 This simply makes looking at the syntax of terms a little easier.
 -/
 
-syntax (name := i) "#view " term : command
+
+
+syntax (name := i) "#i " term : command
+
+namespace Inspect
 
 open Command in
-@[command_elab i]
-def elabView : CommandElab
-  | `(i| #view $t:term) => discard <| liftTermElabM <|
+@[scoped command_elab i]
+def _root_.elabI : CommandElab
+  | `(i| #i $t:term) => discard <| liftTermElabM <|
     withoutErrToSorry <| withSynthesize <| elabTerm t none
   | _ => throwUnsupportedSyntax
+
+end Inspect

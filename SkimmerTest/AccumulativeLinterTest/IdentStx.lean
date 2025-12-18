@@ -2,20 +2,34 @@ module
 
 import Skimmer.Util.LocalLinter
 import Skimmer.Util.Inspect
+import Batteries.Tactic.Alias
+public meta import Skimmer.Lean.Elab.InfoTree
 
 /-! # Ident Syntax
 
-This module demonstrates the different sorts of identifier syntax
+This module demonstrates the different sorts of identifier syntax.
 -/
 
+-- TODO: would be nice to have a widget display for infotrees which allowed us to selectively show, hide, and expand information.
+
 set_option inspect true
+
+open scoped Inspect
+
+#check Lean.Elab.getDeclarationRange?
 
 def Nat.c : Nat := 3
 def Nat.foo : Nat → Nat := fun _ => 3
 
+open Lean
+
 local_linter foo := fun _ => do
   for t in ← Lean.Elab.getInfoTrees do
-    let acc := t.foldInfo (init := #[]) fun _ info acc => Id.run do
+    let acc ← t.foldInfoM (init := #[]) fun ctx info acc => do
+      let elaborator := info.toElabInfo?.map (·.elaborator) |>.getD `noElabInfo
+      Lean.logInfo m!"{info.getKind}\
+        @{if elaborator == Name.anonymous then m!"_" else m!"{elaborator}"}:\
+        {format info.stx}{← if let .ofTermInfo ti := info then ctx.runMetaM ti.lctx (addMessageContextFull <| m!" => {ti.expr}{if ti.expr.isConst then " (const)" else if ti.expr.isFVar then " (fvar)" else ""}") else pure m!""}"
       let .ofTermInfo ti := info | return acc
       if ti.expr.isConstOf ``Nat.add then return acc.push ti.stx else return acc
     Lean.logInfo m!"{repr acc}"
@@ -23,87 +37,18 @@ local_linter foo := fun _ => do
 -- ident
 -- stx: single ident
 -- info: `term[elabIdent|a.b] >- term[a], .. term[b]`; `.` ⊄ range (for either)
-/--
-info: (i "#view" `Nat.c.add)
----
-info: • [Command] @ ⟨50, 0⟩-⟨50, 15⟩ @ elabView
-  • [Term] Nat.c.add : Nat → Nat @ ⟨50, 6⟩-⟨50, 15⟩ @ Lean.Elab.Term.elabIdent
-    • [Completion-Id] Nat.c.add : none @ ⟨50, 6⟩-⟨50, 15⟩
-    • [Term] Nat.c : Nat @ ⟨50, 6⟩-⟨50, 11⟩
-    • [Completion-Dot] [Term] Nat.c : Nat @ ⟨50, 12⟩-⟨50, 15⟩ : none
-    • [Term] Nat.add : Nat → Nat → Nat @ ⟨50, 12⟩-⟨50, 15⟩
----
-info: #[Lean.Syntax.node
-    (Lean.SourceInfo.none)
-    `Lean.Parser.Term.identProj
-    #[Lean.Syntax.ident
-        (Lean.SourceInfo.original
-          "".toRawSubstring
-          { byteIdx := 1640 }
-          "\n\n\n\n-- proj\n-- stx: `Term.proj #[_, \".\", id]`\n-- info: `term[elabProj|e] >- term[e]`; `.` ⊄ e.range\n-- Note that the syntax in the infotree is `identProj #[id]`\n".toRawSubstring
-          { byteIdx := 1643 })
-        "add".toRawSubstring
-        `add
-        []]]
--/
-#guard_msgs in
-#view Nat.c.add
+#i Nat.c.add
 
 -- proj
 -- stx: `Term.proj #[_, ".", id]`
 -- info: `term[elabProj|e] >- term[e]`; `.` ⊄ e.range
 -- Note that the syntax in the infotree is `identProj #[id]`
-/--
-info: (i "#view" (Term.proj (Term.paren (Term.hygienicLParen "(" (hygieneInfo `[anonymous])) (num "3") ")") "." `add))
----
-info: • [Command] @ ⟨86, 0⟩-⟨86, 13⟩ @ elabView
-  • [Term] Nat.add 3 : Nat → Nat @ ⟨86, 6⟩-⟨86, 13⟩ @ Lean.Elab.Term.elabProj
-    • [Term] 3 : Nat @ ⟨86, 6⟩-⟨86, 9⟩ @ Lean.Elab.Term.expandParen
-      • [MacroExpansion]
-        (3)
-        ===>
-        3
-        • [Term] 3 : Nat @ ⟨86, 7⟩-⟨86, 8⟩ @ Lean.Elab.Term.elabNumLit
-    • [Completion-Dot] [Term] 3 : Nat @ ⟨86, 10⟩-⟨86, 13⟩ : some ?_uniq.9849
-    • [Term] Nat.add : Nat → Nat → Nat @ ⟨86, 10⟩-⟨86, 13⟩
----
-info: #[Lean.Syntax.node
-    (Lean.SourceInfo.none)
-    `Lean.Parser.Term.identProj
-    #[Lean.Syntax.ident
-        (Lean.SourceInfo.original
-          "".toRawSubstring
-          { byteIdx := 2933 }
-          "\n\n-- dotIdent (`.c`)\n-- stx: `Term.dotIdent #[\".\", id]`\n-- info: `term[elabDotIdent|e] >- term[e]`; `.` ⊆ range [!]\n".toRawSubstring
-          { byteIdx := 2936 })
-        "add".toRawSubstring
-        `add
-        []]]
--/
-#guard_msgs in
-#view (3).add
+#i (3).add
 
 -- dotIdent (`.c`)
 -- stx: `Term.dotIdent #[".", id]`
 -- info: `term[elabDotIdent|e] >- term[e]`; `.` ⊆ range [!]
-/--
-info: (i
- "#view"
- (Term.typeAscription (Term.hygienicLParen "(" (hygieneInfo `[anonymous])) (Term.dotIdent "." `c) ":" [`Nat] ")"))
----
-info: • [Command] @ ⟨81, 0⟩-⟨81, 16⟩ @ elabView
-  • [Term] Nat.c : Nat @ ⟨81, 6⟩-⟨81, 16⟩ @ Lean.Elab.Term.elabTypeAscription
-    • [Term] Nat : Type @ ⟨81, 12⟩-⟨81, 15⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat : some Sort.{?_uniq.10413} @ ⟨81, 12⟩-⟨81, 15⟩
-      • [Term] Nat : Type @ ⟨81, 12⟩-⟨81, 15⟩
-    • [Term] Nat.c : Nat @ ⟨81, 7⟩-⟨81, 9⟩ @ Lean.Elab.Term.elabDotIdent
-      • [Completion] `c @ ⟨81, 8⟩-⟨81, 9⟩
-      • [Term] Nat.c : Nat @ ⟨81, 7⟩-⟨81, 9⟩
----
-info: #[]
--/
-#guard_msgs in
-#view (.c : Nat)
+#i (.c : Nat)
 
 -- Here we have a dotIdent, but it's not recorded in the infotree (bug?)
 -- The syntax range for `Nat.foo` covers the whole dotIdent, i.e. `.foo`.
@@ -113,234 +58,191 @@ info: #[]
 -- dotIdent application
 -- stx: `Term.dotIdent #[".", id]` (same as above)
 -- info: `term[e]`
-/--
-info: (i
- "#view"
- (Term.typeAscription
-  (Term.hygienicLParen "(" (hygieneInfo `[anonymous]))
-  (Term.app (Term.dotIdent "." `foo) [(num "4")])
-  ":"
-  [`Nat]
-  ")"))
----
-info: • [Command] @ ⟨112, 0⟩-⟨112, 20⟩ @ elabView
-  • [Term] Nat.foo 4 : Nat @ ⟨112, 6⟩-⟨112, 20⟩ @ Lean.Elab.Term.elabTypeAscription
-    • [Term] Nat : Type @ ⟨112, 16⟩-⟨112, 19⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat : some Sort.{?_uniq.10414} @ ⟨112, 16⟩-⟨112, 19⟩
-      • [Term] Nat : Type @ ⟨112, 16⟩-⟨112, 19⟩
-    • [Term] Nat.foo 4 : Nat @ ⟨112, 7⟩-⟨112, 13⟩ @ Lean.Elab.Term.elabApp
-      • [Completion] `foo @ ⟨112, 8⟩-⟨112, 11⟩
-      • [Term] Nat.foo : Nat → Nat @ ⟨112, 7⟩-⟨112, 11⟩
-      • [Term] 4 : Nat @ ⟨112, 12⟩-⟨112, 13⟩ @ Lean.Elab.Term.elabNumLit
----
-info: #[]
--/
-#guard_msgs in
-#view (.foo 4 : Nat)
+#i (Nat.foo 4 : Nat)
 
 -- This is not unique to dotIdents. The same goes for ordinary idents.
 
-/--
-info: (i "#view" (Term.app `Nat.foo [(num "4")]))
----
-info: • [Command] @ ⟨126, 0⟩-⟨126, 15⟩ @ elabView
-  • [Term] Nat.foo 4 : Nat @ ⟨126, 6⟩-⟨126, 15⟩ @ Lean.Elab.Term.elabApp
-    • [Completion-Id] Nat.foo : none @ ⟨126, 6⟩-⟨126, 13⟩
-    • [Term] Nat.foo : Nat → Nat @ ⟨126, 6⟩-⟨126, 13⟩
-    • [Term] 4 : Nat @ ⟨126, 14⟩-⟨126, 15⟩ @ Lean.Elab.Term.elabNumLit
----
-info: #[]
--/
-#guard_msgs in
-#view Nat.foo 4
+#i Nat.foo 4
 
 -- Arguments are not subject to this issue. Perhaps we may therefore check only the heads of `elabApp`s instead of checking the expression of every `TermInfo`. But I'd like to be sure that getting the head always works as expected. We're safer going the check-every-expr route.
 
-/--
-info: (i "#view" (Term.app `Nat.foo [`Nat.c]))
----
-info: • [Command] @ ⟨142, 0⟩-⟨142, 19⟩ @ elabView
-  • [Term] Nat.c.foo : Nat @ ⟨142, 6⟩-⟨142, 19⟩ @ Lean.Elab.Term.elabApp
-    • [Completion-Id] Nat.foo : none @ ⟨142, 6⟩-⟨142, 13⟩
-    • [Term] Nat.foo : Nat → Nat @ ⟨142, 6⟩-⟨142, 13⟩
-    • [Term] Nat.c : Nat @ ⟨142, 14⟩-⟨142, 19⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] Nat.c : some Nat @ ⟨142, 14⟩-⟨142, 19⟩
-      • [Term] Nat.c : Nat @ ⟨142, 14⟩-⟨142, 19⟩
----
-info: #[]
--/
-#guard_msgs in
-#view Nat.foo Nat.c
+#i @Nat.foo
 
--- `elabExplicit` is similar.
+#i Nat.c |>.add
 
-/--
-info: (i "#view" (Term.explicit "@" `Nat.foo))
----
-info: • [Command] @ ⟨155, 0⟩-⟨155, 14⟩ @ elabView
-  • [Term] Nat.foo : Nat → Nat @ ⟨155, 6⟩-⟨155, 14⟩ @ Lean.Elab.Term.elabExplicit
-    • [Completion-Id] Nat.foo : none @ ⟨155, 7⟩-⟨155, 14⟩
-    • [Term] Nat.foo : Nat → Nat @ ⟨155, 7⟩-⟨155, 14⟩
----
-info: #[]
--/
-#guard_msgs in
-#view @Nat.foo
+#i have : Nat.foo = Nat.foo := (by simp [Nat.foo]); true
 
-
-/--
-info: (i "#view" (Term.pipeProj `Nat.c "|>." `add []))
----
-info: • [Command] @ ⟨176, 0⟩-⟨176, 18⟩ @ elabView
-  • [Term] Nat.c.add : Nat → Nat @ ⟨176, 6⟩-⟨176, 18⟩ @ Lean.Elab.Term.elabPipeProj
-    • [Completion-Id] Nat.c : none @ ⟨176, 6⟩-⟨176, 11⟩
-    • [Term] Nat.c : Nat @ ⟨176, 6⟩-⟨176, 11⟩
-    • [Completion-Dot] [Term] Nat.c : Nat @ ⟨176, 15⟩-⟨176, 18⟩ : none
-    • [Term] Nat.add : Nat → Nat → Nat @ ⟨176, 15⟩-⟨176, 18⟩
----
-info: #[Lean.Syntax.node
-    (Lean.SourceInfo.none)
-    `Lean.Parser.Term.identProj
-    #[Lean.Syntax.ident
-        (Lean.SourceInfo.original "".toRawSubstring { byteIdx := 6686 } "\n\n".toRawSubstring { byteIdx := 6689 })
-        "add".toRawSubstring
-        `add
-        []]]
--/
-#guard_msgs in
-#view Nat.c |>.add
-
-/--
-warning: This simp argument is unused:
-  Nat.foo
-
-Hint: Omit it from the simp argument list.
-  simp ̵[̵N̵a̵t̵.̵f̵o̵o̵]̵
-
-Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
----
-info: (i
- "#view"
- (Term.have
-  "have"
-  (Term.letConfig [])
-  (Term.letDecl
-   (Term.letIdDecl
-    (Term.letId (hygieneInfo `[anonymous]))
-    []
-    [(Term.typeSpec ":" («term_=_» `Nat.foo "=" `Nat.foo))]
-    ":="
-    (Term.paren
-     (Term.hygienicLParen "(" (hygieneInfo `[anonymous]))
-     (Term.byTactic
-      "by"
-      (Tactic.tacticSeq
-       (Tactic.tacticSeq1Indented
-        [(Tactic.simp "simp" (Tactic.optConfig []) [] [] ["[" [(Tactic.simpLemma [] [] `Nat.foo)] "]"] [])])))
-     ")")))
-  ";"
-  `true))
----
-info: • [Command] @ ⟨225, 0⟩-⟨225, 59⟩ @ elabView
-  • [Term] have this := ⋯;
-    true : Bool @ ⟨225, 6⟩-⟨225, 59⟩ @ Lean.Elab.Term.elabHaveDecl
-    • [Term] Nat.foo = Nat.foo : Prop @ ⟨225, 13⟩-⟨225, 30⟩ @ «_aux_Init_Notation___macroRules_term_=__2»
-      • [MacroExpansion]
-        Nat.foo = Nat.foo
-        ===>
-        binrel% Eq✝ Nat.foo Nat.foo
-        • [Term] Nat.foo = Nat.foo : Prop @ ⟨225, 13⟩†-⟨225, 30⟩† @ Lean.Elab.Term.Op.elabBinRel
-          • [Term] Nat.foo = Nat.foo : Prop @ ⟨225, 13⟩†-⟨225, 30⟩†
-            • [Completion-Id] Eq✝ : none @ ⟨225, 13⟩†-⟨225, 30⟩†
-            • [Term] Nat.foo : Nat → Nat @ ⟨225, 13⟩-⟨225, 20⟩ @ Lean.Elab.Term.elabIdent
-              • [Completion-Id] Nat.foo : none @ ⟨225, 13⟩-⟨225, 20⟩
-              • [Term] Nat.foo : Nat → Nat @ ⟨225, 13⟩-⟨225, 20⟩
-            • [Term] Nat.foo : Nat → Nat @ ⟨225, 23⟩-⟨225, 30⟩ @ Lean.Elab.Term.elabIdent
-              • [Completion-Id] Nat.foo : none @ ⟨225, 23⟩-⟨225, 30⟩
-              • [Term] Nat.foo : Nat → Nat @ ⟨225, 23⟩-⟨225, 30⟩
-    • [Tactic] @ ⟨225, 35⟩-⟨225, 52⟩
-      (Term.byTactic
-       "by"
-       (Tactic.tacticSeq
-        (Tactic.tacticSeq1Indented
-         [(Tactic.simp "simp" (Tactic.optConfig []) [] [] ["[" [(Tactic.simpLemma [] [] `Nat.foo)] "]"] [])])))
-      before ⏎
-      ⊢ Nat.foo = Nat.foo
-      after no goals
-      • [Tactic] @ ⟨225, 35⟩-⟨225, 37⟩
-        "by"
-        before ⏎
-        ⊢ Nat.foo = Nat.foo
-        after no goals
-        • [Tactic] @ ⟨225, 38⟩-⟨225, 52⟩ @ Lean.Elab.Tactic.evalTacticSeq
-          (Tactic.tacticSeq
-           (Tactic.tacticSeq1Indented
-            [(Tactic.simp "simp" (Tactic.optConfig []) [] [] ["[" [(Tactic.simpLemma [] [] `Nat.foo)] "]"] [])]))
-          before ⏎
-          ⊢ Nat.foo = Nat.foo
-          after no goals
-          • [Tactic] @ ⟨225, 38⟩-⟨225, 52⟩ @ Lean.Elab.Tactic.evalTacticSeq1Indented
-            (Tactic.tacticSeq1Indented
-             [(Tactic.simp "simp" (Tactic.optConfig []) [] [] ["[" [(Tactic.simpLemma [] [] `Nat.foo)] "]"] [])])
-            before ⏎
-            ⊢ Nat.foo = Nat.foo
-            after no goals
-            • [Tactic] @ ⟨225, 38⟩-⟨225, 52⟩ @ Lean.Elab.Tactic.evalSimp
-              (Tactic.simp "simp" (Tactic.optConfig []) [] [] ["[" [(Tactic.simpLemma [] [] `Nat.foo)] "]"] [])
-              before ⏎
-              ⊢ Nat.foo = Nat.foo
-              after no goals
-              • [Completion-Id] Nat.foo : none @ ⟨225, 44⟩-⟨225, 51⟩
-              • [Term] Nat.foo : Nat → Nat @ ⟨225, 44⟩-⟨225, 51⟩
-              • [Completion-Id] Nat.foo : none @ ⟨225, 44⟩-⟨225, 51⟩
-              • [Term] Nat.foo : Nat → Nat @ ⟨225, 44⟩-⟨225, 51⟩
-              • [CustomInfo(Lean.Elab.Tactic.UnusedSimpArgsInfo)]
-    • [Term] this (isBinder := true) : Nat.foo = Nat.foo @ ⟨225, 11⟩†!-⟨225, 11⟩†!
-    • [Term] true : Bool @ ⟨225, 55⟩-⟨225, 59⟩ @ Lean.Elab.Term.elabIdent
-      • [Completion-Id] true : none @ ⟨225, 55⟩-⟨225, 59⟩
-      • [Term] true : Bool @ ⟨225, 55⟩-⟨225, 59⟩
--/
-#guard_msgs in
-#view have : Nat.foo = Nat.foo := (by simp [Nat.foo]); true
-
-/--
-info: (Command.in (Command.open "open" (Command.openSimple [`Nat])) "in" (i "#view" `foo))
----
-info: • [Command] @ ⟨247, 0⟩-⟨248, 9⟩ @ Lean.Elab.Command.expandInCmd
-  • [MacroExpansion]
-    open Nat in
-    #view foo
-    ===>
-    failed to pretty print term (use 'set_option pp.rawOnError true' for raw representation)
-    • [Command] @ ⟨247, 9⟩†-⟨247, 11⟩† @ Lean.Elab.Command.elabSection
-    • [Command] @ ⟨247, 0⟩-⟨247, 8⟩ @ Lean.Elab.Command.elabOpen
-    • [Command] @ ⟨1, 0⟩†-⟨1, 0⟩† @ Lean.Elab.Command.elabEndLocalScope
-    • [Command] @ ⟨248, 0⟩-⟨248, 9⟩ @ elabView
-      • [Term] foo : Nat → Nat @ ⟨248, 6⟩-⟨248, 9⟩ @ Lean.Elab.Term.elabIdent
-        • [Completion-Id] foo : none @ ⟨248, 6⟩-⟨248, 9⟩
-        • [Term] foo : Nat → Nat @ ⟨248, 6⟩-⟨248, 9⟩
-    • [Command] @ ⟨247, 9⟩†-⟨247, 11⟩† @ Lean.Elab.Command.elabEnd
-      • [Completion] (Command.end "end" []) @ ⟨247, 9⟩†-⟨247, 11⟩†
--/
-#guard_msgs in
 open Nat in
-#view foo
+#i foo
+
+namespace Foo
+
+set_option pp.fullNames true
+
+def foo := 4
+
+-- set_option pp.fullNames true
+inductive Foo where
+| yike
+
+#i (3).foo
+
+-- Note: `declId`s tend to be fvars.
+
+@[deprecated foo (since := "yesterday")]
+def bar := 4
+
+alias bar' := foo
+
+theorem foo_iff : True ↔ True := by rfl
+
+alias ⟨fw, rev⟩ := foo_iff
+
+#check ``foo
+
+end Foo
+
+
+public section exportNames
+
+/- Exported names still resolve to the original name, but -/
+
+set_option pp.fullNames true
+namespace Gamma
+
+def ray := true
+
+end Gamma
+
+namespace Light
+
+export Gamma (ray)
+
+#check ray
+#check Light.ray
+#check Gamma.ray
+
+/-- warning: `ray -/
+#guard_msgs (warning) in
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `ray}"
+
+end Light
+
+#check Light.ray
+
+-- Note: `unresolveNameGlobal` does not check that the name actually resolves to the result if unknown.
+-- Note: we are handling public declarations, but we would have to unresolve the full name `_private.<mod_name>.0.<name>` for it to "work" otherwise. I.e., this should (obviously)
+
+#guard_msgs (error) in
+#check Light.ray
+
+/-- warning: `Gamma.ray -/
+#guard_msgs (warning) in
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `Gamma.ray}"
+
+open Gamma in
+/-- warning: `ray -/
+#guard_msgs (warning) in
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `Gamma.ray}"
+
+open Light in
+/-- warning: `ray -/
+#guard_msgs (warning) in
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `Gamma.ray}"
+
+namespace Light
+
+/-- warning: `ray -/
+#guard_msgs (warning) in
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `Gamma.ray}"
+
+end Light
+
+end exportNames
+
+
+public section protectedNames
+
+protected def Foo'.bar := fun _ : Bool => true
+
+@[expose] def Foo' := Bool
+
+-- Dot notation doesn't work
+/--
+error: Invalid field `bar`: The environment does not contain `Bool.bar`
+  true
+has type
+  Bool
+-/
+#guard_msgs (error) in
+#check (true).bar
+
+def e : Foo' := false
+
+@[expose] abbrev Foo'' := Bool
+
+def e' : Foo'' := false
+
+def Foo''.bar := fun _ : Bool => true
+
+open Lean Elab Meta in
+run_elab logInfo m!"{← withReducible <| isDefEqGuarded (mkConst ``Foo'') (mkConst ``Bool)}"
+/--
+error: Invalid field notation: Function `Foo''.bar` does not have a usable parameter of type `Foo''` for which to substitute `e'`
+
+Note: Such a parameter must be explicit, or implicit with a unique name, to be used by field notation
+-/
+#guard_msgs (error) in
+#check e'.bar
 
 /--
-info: (i "#view" (Term.proj (Term.paren (Term.hygienicLParen "(" (hygieneInfo `[anonymous])) (num "3") ")") "." `foo))
----
-info: • [Command] @ ⟨265, 0⟩-⟨265, 13⟩ @ elabView
-  • [Term] Nat.foo 3 : Nat @ ⟨265, 6⟩-⟨265, 13⟩ @ Lean.Elab.Term.elabProj
-    • [Term] 3 : Nat @ ⟨265, 6⟩-⟨265, 9⟩ @ Lean.Elab.Term.expandParen
-      • [MacroExpansion]
-        (3)
-        ===>
-        3
-        • [Term] 3 : Nat @ ⟨265, 7⟩-⟨265, 8⟩ @ Lean.Elab.Term.elabNumLit
-    • [Completion-Dot] [Term] 3 : Nat @ ⟨265, 10⟩-⟨265, 13⟩ : some ?_uniq.121
-    • [Term] Nat.foo : Nat → Nat @ ⟨265, 10⟩-⟨265, 13⟩
+error: Invalid field notation: Function `Foo'.bar` does not have a usable parameter of type `Foo'` for which to substitute `e`
+
+Note: Such a parameter must be explicit, or implicit with a unique name, to be used by field notation
 -/
-#guard_msgs in
-#view (3).foo
+#guard_msgs (error) in
+#check e.bar
+
+protected def Foo'.bar' := fun _ : Foo' => true
+
+-- Protected defs may be used in dot notation without remaining protected:
+#check e.bar'
+
+-- unresolveName works as expected:
+open Foo'
+run_elab logWarning m!"{repr <|← unresolveNameGlobal `Foo'.bar}"
+
 
 -- TODO: what about `PartialTerm`?
+
+/-
+Lean.Elab.App: `elabAppFn` is a nice catalog of possible syntax:
+```
+match f with
+| `($(e).$idx:fieldIdx) => elabFieldIdx e idx explicit
+| `($e |>.$idx:fieldIdx) => elabFieldIdx e idx explicit
+| `($(e).$field:ident) => elabFieldName e field explicit
+| `($e |>.$field:ident) => elabFieldName e field explicit
+| `(@$(e).$idx:fieldIdx) => elabFieldIdx e idx (explicit := true)
+| `(@$(e).$field:ident) => elabFieldName e field (explicit := true)
+| `($_:ident@$_:term) =>
+throwError m!"Expected a function, but found the named pattern{indentD f}"
+++ .note m!"Named patterns `<identifier>@<term>` can only be used when pattern-matching"
+| `($id:ident) => do
+elabAppFnId id [] lvals namedArgs args expectedType? explicit ellipsis overloaded acc
+| `($id:ident.{$us,*}) => do
+let us ← elabExplicitUnivs us
+elabAppFnId id us lvals namedArgs args expectedType? explicit ellipsis overloaded acc
+| `(@$id:ident) =>
+elabAppFn id lvals namedArgs args expectedType? (explicit := true) ellipsis overloaded acc
+| `(@$_:ident.{$_us,*}) =>
+elabAppFn (f.getArg 1) lvals namedArgs args expectedType? (explicit := true) ellipsis overloaded acc
+| `(@$_)     => throwUnsupportedSyntax -- invalid occurrence of `@`
+| `(_)       => throwError "A placeholder `_` cannot be used where a function is expected"
+| `(.$id:ident) =>
+let res ← withRef f <| resolveDottedIdentFn id id.getId.eraseMacroScopes expectedType?
+-- Use (forceTermInfo := true) because we want to record the result of .ident resolution even in patterns
+elabAppFnResolutions f res lvals namedArgs args expectedType? explicit ellipsis overloaded acc (forceTermInfo := true)
+| _ => do
+
+-/

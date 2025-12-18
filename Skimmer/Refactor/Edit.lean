@@ -12,6 +12,18 @@ public import Skimmer.Refactor.String
 
 open Lean
 
+/- TODO: need a better way to avoid overlapping edits. Ideally, we check at recording time;
+we can check if the next position already recorded after the start of the new one is the "end" of some syntax range or if the one prior to the end is the "start" (and in either case fail).
+
+RBMap? Maybe? I believe there's API for that kind of thing. (Could have two RBSets, or one RBMap to Bool.) Possibly the edits should be recorded in an RB thing anyway.
+
+binary search in sorted array? No; means we're constantly resorting.
+
+Possibly, we want to construct this at the end instead of `qsort`ing to avoid time spent in the ref.
+-/
+
+/- TODO: Edit subsets, and the ability to "imagine" how to shift edits after applying one subset. -/
+
 structure Skimmer.Edit where
   range : Syntax.Range
   replacement : String
