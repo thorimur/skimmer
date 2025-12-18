@@ -11,27 +11,52 @@ This file adds a command of convenience for locally adding a linter (and allowin
 
 open Lean Elab Term Command Linter
 
-syntax localLinterDef := ident " := " term
+syntax localLinterDef := ident declVal
 syntax localLinterClear := &"clear " (&"all" <|> ident)
 syntax localLinterArgs := localLinterClear <|> localLinterDef
 
 syntax "local_linter " localLinterArgs : command
 
+syntax "local_linter?" : command
+
+#eval true
+
+open Parser.Command in
 elab_rules : command
-| `(command| local_linter $name:ident := $code:term) => unsafe liftTermElabM do
-  let val ← withoutErrToSorry <| withSynthesize <|
-    elabTermEnsuringType code (Expr.const ``CommandElab [])
+| `(command| local_linter $id:ident $val:declVal) => unsafe liftTermElabM <| do
+  let name := id.getId ++ `localLinter
+  let tempRunName := name ++ `run
+  let type : Expr := mkConst ``CommandElab
+  -- Instead of elaborating directly into an `Expr`, we use `#eval`'s approach to allow `let rec`s.
+  let defView := mkDefViewOfDef { visibility := .private } <|←
+    `(definition| def $(mkIdentFrom id (`_root_ ++ tempRunName)) : $(← Term.exprToSyntax type) $val:declVal)
+  -- Allow access to both `meta` and non-`meta` declarations as the compilation result does not
+  -- escape the current module.
+  withOptions (Compiler.compiler.checkMeta.set · false) do
+    Term.elabMutualDef #[] { header := "" } #[defView]
   -- TODO: investigate why `local_linter foo := fun` reaches unreachable code;
   -- this is a hack that prevents that.
-  let axioms ← val.getUsedConstants.mapM collectAxioms
+  -- TODO: handle potential internal error better
+  if (← MonadLog.hasErrors) then return
+  let tempRunName ← resolveGlobalConstNoOverload (mkIdentFrom val tempRunName)
+  let some value := (← getConstInfo tempRunName).value?
+    | throwErrorAt val "Internal error: run expression did not produce a value."
+  let axioms ← value.getUsedConstants.mapM collectAxioms
   if axioms.any (·.contains ``sorryAx) then return
 
-  let name := mkPrivateName (← getEnv) <| name.getId ++ `localLinter
    -- TODO: correct `checkMeta`?
-  let run ← Meta.evalExpr CommandElab (Expr.const ``CommandElab [])
-    (← instantiateMVars val) (checkMeta := true)
+  let run ← evalConst CommandElab tempRunName (checkMeta := false)
   lintersRef.modify fun a => a.eraseP (·.name == name) |>.push { name, run }
 | `(command| local_linter clear all) =>
   lintersRef.modify fun a => a.eraseP ((`localLinter).isSuffixOf ·.name)
-| `(command| local_linter clear $name:ident) =>
-  lintersRef.modify fun a => a.eraseP ((name.getId ++ `localLinter).isSuffixOf ·.name)
+| `(command| local_linter clear $name:ident) => do
+  let erased ← lintersRef.modifyGet fun a =>
+    match a.findFinIdx? (·.name == name.getId ++ `localLinter) with
+    | none => (false, a)
+    | some idx => (true, a.eraseIdx idx)
+  unless erased do
+    throwErrorAt name m!"No local linter {name} was found."
+| `(command| local_linter?) => do
+  let localLinters := (← lintersRef.get).filterMap (·.name.eraseSuffix? `localLinter)
+  logInfo <| if localLinters.isEmpty then
+    m!"No local linters have been declared." else m!"Local linters:\n{localLinters}"
