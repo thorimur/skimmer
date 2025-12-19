@@ -9,7 +9,12 @@ leanOptions = { experimental.module = true }
 [[lean_lib]]
 name = "SkimmerTest"
 leanOptions = { experimental.module = true }
-globs = ["SkimmerTest.Test.+"]
+globs = ["SkimmerTest.+"]
+
+[[lean_lib]]
+name = "SkimmerExtra"
+leanOptions = { experimental.module = true }
+globs = ["SkimmerExtra.+"]
 
 [[lean_exe]]
 name = "write_edits"
