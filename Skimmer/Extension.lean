@@ -34,34 +34,28 @@ def getDirOfModule (sp : SearchPath) (mod : Name) : IO System.FilePath := do
     | throw <| IO.userError s!"{mod} not found on search path:\n  {sp}"
   return modSourceDir
 
-def executeEdits (env : Environment) (root : Name) : IO Unit := do
-  let sourceDir ← getDirOfModule (← getSrcSearchPath) root
+def executeEdits (env : Environment) (_root : Name) : IO Unit := do
   let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
     let edits := editss[idx]
     unless edits.isEmpty do
       let some mod := env.getModuleName idx | continue
-      if mod.getRoot != root || mod == env.mainModule then continue
-      let path := modToFilePath sourceDir mod "lean"
       IO.println
-        s!"writing {edits.size} edit{if edits.size == 1 then "" else "s"} to {mod} @ {path}"
-      let text ← IO.FS.readFile path
+        s!"writing {edits.size} edit{if edits.size == 1 then "" else "s"} to {mod}"
+      let text ← IO.FS.readFile "/Users/thomas/LT2026/Demo/Demo/Basic.lean"
       let out := text.applyEdits edits
-      IO.FS.writeFile path out
+      IO.FS.writeFile "/Users/thomas/LT2026/Demo/Demo/Basic.lean" out
 
 def showEdits (env : Environment) (root : Name) : IO Unit := do
   -- let base ← Mathlib.getPackageDir "Mathlib"
-  let sourceDir ← getDirOfModule (← getSrcSearchPath) `Skimmer
   let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
     let edits := editss[idx]
     unless edits.isEmpty do
       let some mod := env.getModuleName idx | continue
-      if mod.getRoot != root || mod == env.mainModule then continue
-      let path := modToFilePath sourceDir mod "lean"
       -- Mario's code:
-      IO.println s!"writing {edits.size} edits to {mod} @ {path}:"
-      let text ← IO.FS.readFile path
+      IO.println s!"writing {edits.size} edits to {mod}:"
+      let text ← IO.FS.readFile "/Users/thomas/LT2026/Demo/Demo/Basic.lean"
       let mut out : String := ""
       let mut prevEndPos : text.ValidPos := text.startValidPos
       for edit in edits do -- note: already sorted
