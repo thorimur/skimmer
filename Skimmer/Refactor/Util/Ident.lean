@@ -221,10 +221,9 @@ Cases handled: identInfo is the elaboration of some canonical syntax into an ide
 -/
 def transformIdentUsage (usage : Syntax)
     -- expected type somewhere in here
-    (identInfo : TermInfo)
+    (resolvedName : Name)
     (replacements : NameMap Name) :
     TermElabM (Option Replacement) := do
-  let some (resolvedName, _) := identInfo.expr.const? | return none
   -- TODO: proj
   -- NOW TODO: command context with namespace open decls
   match usage with
@@ -282,7 +281,7 @@ Ideally we have two environments, but...
 Run this before entering. -/
 -- NOW TODO: get infotree from environment. Something else should produce the new name; createNewName I suppose
 def transformDeclIdAndCreateDeprecated (cmd : TSyntax ``declaration) (replacements : NameMap Name) :
-    CommandElabM (NameMap Name × Option Replacement × Option Syntax) := runTermElabM fun vars => do
+    CommandElabM (NameMap Name × Option Replacement × Option Command) := runTermElabM fun vars => do
   let decl := cmd.raw[1]
   let declKind := decl.getKind
   -- TODO: only handle defs and theorems for now
@@ -391,9 +390,20 @@ def Replacement.toEdit : Replacement → CommandElabM Edit
   | .insertCommandAfter cmd inserted => do
     let some e := cmd.getTailPos? true | throwError "Could not find tail pos for{indentD cmd}"
     let range : Syntax.Range := ⟨e, e⟩
+    let trailing := cmd.getTrailing?.map (·.toString) -- trailing can include comments before next command
     let fmt ← liftCoreM <| PrettyPrinter.ppCommand inserted
-    return ⟨range, s!"\n\n{fmt.pretty' (← getOptions)}"⟩
+    return ⟨range, s!"\n\n{fmt.pretty' (← getOptions)}{trailing.getD ""}"⟩
 
+def _root_.Lean.Elab.TermInfo.runTermElabM (ti : TermInfo) (ctx : ContextInfo) (k : TermElabM α) : CommandElabM α := do
+  liftTermElabM do
+  setMCtx ctx.mctx
+  withLCtx ti.lctx {} do
+  Meta.withLocalInstances (ti.lctx.decls.toList.filterMap id) do
+  -- TODO: handle internal namespacing and opens from ctx
+  k
+
+def byteIdxOfImportInsertion : String.Pos.Raw := ⟨7⟩
+def importInsertionRange : Syntax.Range := ⟨byteIdxOfImportInsertion, byteIdxOfImportInsertion⟩
 
 -- Temporary. Will be extensible in some kind of RefactorM
 def RefactorDeprecated : Dive (NameMap Name) (Array Edit) where
@@ -423,7 +433,74 @@ def RefactorDeprecated : Dive (NameMap Name) (Array Edit) where
       if let some newCmd := cmdEdit? then
         edits := edits.push <|← newCmd.toEdit
       if let some dep := deprecation? then
-        edits := edits.push (.insertCommandAfter cmd dep)
+        edits := edits.push <|← (Replacement.insertCommandAfter cmd dep).toEdit
+    -- NOW TODO: traverse infotrees, get original idents and dotidents, replace namespaces + open decls beforehand. don't worry about these changing within the command yet (TODO)
+    -- TODO: remove hack: ignore declId
+    let mut idents : Array Syntax := #[]
+    let declId? := if cmd.isOfKind ``declaration then some cmd[1][1] else none
+    for stx in cmd.topDown do
+      if some stx == declId? then continue -- skip declId for now
+      if stx.isIdent || stx.isOfKind ``dotIdent then
+        idents := idents.push stx
+    let ranges := idents.map (fun i => i.getRange? true |>.map (i,·)) |>.reduceOption
+    for t in ← getInfoTrees do
+      let infos := t.foldInfo (init := #[]) fun ctx info acc =>
+        match info with
+        | .ofTermInfo ti =>
+          if let some n := ti.expr.constName? then
+            if let some range := ti.stx.getRange? true then
+              if let some (i,_) := ranges.find? (·.2 == range) then
+                acc.push (i, n, ti, ctx)
+              else acc
+            else acc
+          else acc
+        | _ => acc
+      -- TODO: also replace inside each run
+      let savedScopes ← getScopes
+      let replaceName (n : Name) := n.replacePrefixSome replacements.get? |>.getD n
+      modify fun s => { s with scopes := s.scopes.map fun scope => { scope with
+          currNamespace := replaceName scope.currNamespace,
+          openDecls := scope.openDecls.map fun
+            | .simple ns e => .simple (replaceName ns) e
+            | .explicit i n => .explicit (replaceName i) (replaceName n) }
+        }
+      for (i, n, ti, ctx) in infos do
+        let some r ← ti.runTermElabM ctx do transformIdentUsage i n replacements
+          | continue -- NOW TODO: trace
+        edits := edits.push <|← r.toEdit
+      modify fun s => { s with scopes := savedScopes }
+    -- insert deprecated ones. TODO: cases where the deprecated declaration has itself seen replacements?
+    let d := Linter.deprecatedAttr.ext.getImportedEntries (← getEnv)
+    for mod in d do
+      for (name, { newName?, .. }) in mod do
+        if let some newName := newName? then
+          replacements := replacements.insert name newName
+    return (replacements, edits)
+  cleanup eoi replacements edits := do
+    let reviews := edits.any (·.replacement.startsWith "review%")
+    if !reviews then return (replacements, edits) else
+      -- bad!!! TODO: literally anything else
+      -- guess that 7 is the start of the line after `module`
+      return (replacements, edits.push
+        ⟨importInsertionRange, "import Skimmer.Review\n"⟩)
+
+
+
+
+    -- DONE
+    -- get all ident syntax from cmd
+    -- traverse infotrees and save contextinfo + infonode when syntax has same range. Destructure then and there?
+    -- Get ident full name from expression
+    -- Hope for no macro weirdness?
+    -- process contextinfo to set up currnamespace (replace) + opendecls (replace); get lctx from terminfo for avoiding locals.
+def importSkimmerStr := "import Skimmer.Refaactor.Dive\n"
+def importSkimmerEdit : Edit := ⟨importInsertionRange, "import Skimmer.Refaactor.Dive\n"⟩
+def deleteImportSkimmerEdit : Edit := ⟨
+  ⟨byteIdxOfImportInsertion,
+  ⟨byteIdxOfImportInsertion.byteIdx + importSkimmerStr.utf8ByteSize⟩⟩,
+  ""⟩
+
+-- NOW PLAN: insert imports with special write imports. Maybe we do need hardcoded paths.
 
 
 
@@ -436,6 +513,8 @@ def RefactorDeprecated : Dive (NameMap Name) (Array Edit) where
 
 syntax (name := reviewTermStx) "review% " "(" term " => " term ")" : term
 
+-- NOW TODO: write in env extension
+-- Hmm, maybe just import demo.lean in the dive file?
 open Lean Elab Term Tactic.TryThis
 @[term_elab Skimmer.reviewTermStx] def elabReviewTerm : TermElab
   | stx@`(reviewTermStx| review% ($t₀:term => $t₁:term)), expectedType? => do
@@ -458,27 +537,25 @@ open Lean Elab Term Tactic.TryThis
     elabTerm t₀ expectedType?
   | _, _ => throwUnsupportedSyntax
 
-syntax (name := diveStx) "dive" : command
 
-def f : Bool := review% (true => false)
+syntax (name := diveStx) "dive" ("prepare" ("apply")?)? : command
 
-elab_rules : command
-| `(dive) =>
+-- def f : Bool := review% (true => false)
 
 
-#eval show TermElabM Syntax from do
-  let e ← `(command|/-- a -/ @[simp] def e := true)
-  return e.raw[1][1]
+-- #eval show TermElabM Syntax from do
+--   let e ← `(command|/-- a -/ @[simp] def e := true)
+--   return e.raw[1][1]
 
 
 -- TODO: things in `elabExplicit`
 -- TODO: `explicitUniv`
 -- TODO: handle implicit lambda? Needed?
-#check elabDotIdent
-#check Elab.Term.expandArgs
-#check explicitUniv
+-- #check elabDotIdent
+-- #check Elab.Term.expandArgs
+-- #check explicitUniv
 
-
+/-
 #exit
 
 open Parser Term in
@@ -542,3 +619,4 @@ def replaceDeprecatedIdent : Refactor where run stx := do
   return acc
 
 initialize addRefactor replaceDeprecatedIdent
+-/
