@@ -14,5 +14,5 @@ open Lean
 unsafe def main : IO Unit := do
   initSearchPath (← findSysroot) ["/Users/thomas/LT2026/Demo"]
   enableInitializersExecution
-  let env ← importModules #[{module := `Demo}] {} (loadExts := true)
-  executeEdits env `Demo
+  let env ← importModules #[{module := `Demo.Basic}] {} (loadExts := true)
+  executeEdits env `Demo.Basic
