@@ -15,4 +15,5 @@ unsafe def main : IO Unit := do
   initSearchPath (← findSysroot) ["/Users/thomas/LT2026/Demo/.lake/build/lib/lean/Demo/"]
   enableInitializersExecution
   let env ← importModules #[{module := `Demo.Basic}] {} (loadExts := true)
+  showEdits env `Demo.Basic
   executeEdits env `Demo.Basic
