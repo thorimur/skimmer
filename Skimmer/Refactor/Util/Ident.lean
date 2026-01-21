@@ -541,6 +541,7 @@ initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
 
 def replaceDeprecatedIdent : Refactor where
   run cmd := unsafe do
+    logInfo m!"here"
     let (replacements, edits) ← refactorDeprecated.post cmd (← replacementsRef.take) #[]
     replacementsRef.set replacements
     let reviews := edits.any (·.replacement.startsWith "review%")

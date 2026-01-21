@@ -46,7 +46,7 @@ def executeEdits (env : Environment) (_root : Name) : IO Unit := do
       let out := text.applyEdits edits
       IO.FS.writeFile "/Users/thomas/LT2026/Demo/Demo/Basic.lean" out
 
-def showEdits (env : Environment) (root : Name) : IO Unit := do
+def showEdits (env : Environment) (_root : Name) : IO Unit := do
   -- let base ← Mathlib.getPackageDir "Mathlib"
   let editss := editExt.getImportedEntries env
   for h : idx in [:editss.size] do
