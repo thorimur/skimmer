@@ -229,8 +229,7 @@ def transformIdentUsage (usage : Syntax)
   match usage with
   -- TODO: need to handle `@(<app>/other term)` or is that given by infotrees
   | stx@`(Parser.ident| $_:ident) =>
-    let some newName ← observing? <| unresolveNameGlobalAvoidingLocals resolvedName
-      | return none -- TODO: refine. Could do better?
+    let some newName := replacements.get? resolvedName | return none
     return some <| .compatible stx (mkIdentFrom stx newName) newName.toString
 
   -- | `(explicit| @%$atSign$i:ident) => return (replacements, none) -- TODO
@@ -240,9 +239,7 @@ def transformIdentUsage (usage : Syntax)
     if _h : r matches .unchangedIdent .. then return none else
       match r with
       | .compatible newIdent n => return some (.compatible i newIdent n.toString)
-      | .incompatible n =>
-        let some newName ← observing? <| unresolveNameGlobalAvoidingLocals n
-          | return none
+      | .incompatible newName =>
         -- replace dotIdent with normal ident
         return some (.incompatible stx (mkIdentFrom stx newName) newName.toString)
   | _ => return none
@@ -322,6 +319,7 @@ def transformDeclIdAndCreateDeprecated (cmd : TSyntax ``declaration) (replacemen
   let deprecation ← `(command|
     @[deprecated $(mkCIdent newFullName) (since := $dateStr:str)]
     alias $(mkCIdent newOldDeclIdName) := $(mkCIdent newFullName))
+
   let replacements := replacements.insert oldFullName newFullName
   let declId := cmd.raw[1][1]
   if let some newId := newDeclIdName? then
@@ -334,7 +332,7 @@ def transformDeclIdAndCreateDeprecated (cmd : TSyntax ``declaration) (replacemen
   else
     return (replacements, none, some <| deprecation)
 
-
+#print Declaration
 -- For now we just replace namespaces dynamically...no state.
 
 -- NOW TODO: initialize name map correctly both at top of file and after each command
@@ -406,8 +404,9 @@ def byteIdxOfImportInsertion : String.Pos.Raw := ⟨7⟩
 def importInsertionRange : Syntax.Range := ⟨byteIdxOfImportInsertion, byteIdxOfImportInsertion⟩
 
 -- Temporary. Will be extensible in some kind of RefactorM
-def RefactorDeprecated : Dive (NameMap Name) (Array Edit) where
+def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
   setup skimported := do
+    -- NOTE: ignore imported for now!
     let mut replacements : NameMap Name := {}
     for r in skimported do
       replacements := replacements.union r
@@ -537,6 +536,22 @@ open Lean Elab Term Tactic.TryThis
     elabTerm t₀ expectedType?
   | _, _ => throwUnsupportedSyntax
 
+-- HACK: using a ref for Elab.async
+initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
+
+def replaceDeprecatedIdent : Refactor where
+  run cmd := unsafe do
+    let (replacements, edits) ← refactorDeprecated.post cmd (← replacementsRef.take) #[]
+    replacementsRef.set replacements
+    let reviews := edits.any (·.replacement.startsWith "review%")
+    if !reviews then return edits else
+      -- TODO: we only do one of these,  but that is the only reason here is okay.
+      -- bad!!! TODO: literally anything else
+      -- guess that 7 is the start of the line after `module`
+      return edits.push
+        ⟨importInsertionRange, "import Skimmer.Review\n"⟩
+
+initialize addRefactor replaceDeprecatedIdent
 
 syntax (name := diveStx) "dive" ("prepare" ("apply")?)? : command
 
