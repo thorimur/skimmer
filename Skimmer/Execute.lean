@@ -12,7 +12,7 @@ public import Skimmer.Extension
 open Lean
 
 unsafe def main : IO Unit := do
-  initSearchPath (← findSysroot) ["/Users/thomas/LT2026/Demo"]
+  initSearchPath (← findSysroot) ["/Users/thomas/LT2026/Demo/.lake/build/lib/lean/Demo/"]
   enableInitializersExecution
-  let env ← importModules #[{module := `Demo.Basic}] {} (loadExts := true)
-  executeEdits env `Demo.Basic
+  let env ← importModules #[{module := `Demo}] {} (loadExts := true)
+  executeEdits env `Demo
