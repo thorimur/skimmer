@@ -30,7 +30,7 @@ open Lean Language Lean Elab
 
 -- #check Lean.HeaderProcessedSnapshot -- file headers
 -- #check Elab.HeaderProcessedSnapshot -- definition headers
-
+section
 variable (stx : HeaderSyntax) (mainModuleName : Name) (opts : Options) (trustLevel : UInt32 := 0)
     (plugins : Array System.FilePath := #[])
 
@@ -49,6 +49,7 @@ def runFrontend.setup : SetupImportsResult where
 def runFrontend.setupForProcessing (stx : HeaderSyntax) :
     ProcessingT IO (Except Lean.HeaderProcessedSnapshot SetupImportsResult) :=
   return .ok <| setup stx mainModuleName opts trustLevel plugins
+end
 /-
   let opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
   -- default to async elaboration; see also `Elab.async` docs
@@ -86,64 +87,86 @@ structure ImportsSetup extends SetupImportsResult where
   stx : HeaderSyntax
 deriving Repr, Inhabited
 
+/-- Facts about the module that are inferred external to the module itself -/
+structure ModuleSetupExternal where
+  /-- The name of the module. -/
+  mainModuleName : Name
+  trustLevel : UInt32 := 0
+  /-- The package to which the module belongs (if any). -/
+  package? : Option PkgId := none
+  /-- Dynamic libraries to load with the module. -/
+  dynlibs : Array System.FilePath := #[]
+  /-- Plugins to initialize with the module. -/
+  plugins : Array System.FilePath := #[]
+  /-- Additional options for the module. -/
+  options : LeanOptions := {}
+  -- TODO: not clear to me if imports and import artifacts should be here? does lake also provide these prior to the processing of the file somehow?
+
+-- /-- Deliberate changes we may want to make to the module setup. We go field by field to allow them to be more easily altered independently... actually, no, they may need to interfere, right? -/
+-- structure SetupChanges where
+--   mainModuleNameChanges : Name → Name := id
+--   packageChanges : Option PkgId → Option PkgId := id
+--   trustLevelChanges : UInt32 → UInt32 := id
+--   importChanges : Array Import → Array Import := id
+--   importArtsChanges : NameMap ImportArtifacts → NameMap ImportArtifacts := id
+--   dynlibChanges : Array System.FilePath → Array System.FilePath := id
+--   pluginChanges : Array System.FilePath → Array System.FilePath := id
+--   optsChanges : Options → Options := id
+--   isModuleChanges : Bool → Bool := id
+
+#print SetupImportsResult
+
 /-- The same as `runFrontEnd`, but
 1. stores the `SetupImportsResult` in a promise to grab it later (sigh, wish it was in a snap)
     TODO: is there a better way?
 2. stops after producing the snapshot tree
 3. does not time
 4. asks for an input context instead of an input and filename
-5. allows the caller to supply `old?` for reuse -/
+5. allows changing the `SetupImportsResult`, but not through the given ModuleSetup as before
+6. allows the caller to supply `old?` for reuse -/
 protected def runFrontend
     -- (input : String)
     -- (fileName : String)
     (inputCtx : Parser.InputContext)
-    (mainModuleName : Name)
-    (opts : Options := {})
-    (trustLevel : UInt32 := 0)
+    (moduleSetup : ModuleSetupExternal) -- subsumes mainModuleName + some of setup?
     -- (oleanFileName? : Option System.FilePath := none)
     -- (ileanFileName? : Option System.FilePath := none)
     -- (jsonOutput : Bool := false)
     -- (errorOnKinds : Array Name := #[])
-    (plugins : Array System.FilePath := #[])
     -- (printStats : Bool := false)
-    (setup? : Option ModuleSetup := none)
+    -- TODO: not sure if a big old function here is necessary or performant, but it is versatile
+    (setupChanges? : Option (SetupImportsResult → ProcessingT IO SetupImportsResult) := none)
     (old? : Option InitialSnapshot := none)
     : IO (IO.Promise ImportsSetup × InitialSnapshot) := do
   -- let startTime := (← IO.monoNanosNow).toFloat / 1000000000
   -- let inputCtx := Parser.mkInputContext input fileName
-  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
+  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet moduleSetup.options.toOptions true
   -- default to async elaboration; see also `Elab.async` docs
   let opts := Elab.async.setIfNotSet opts true
   let ctx := { inputCtx with }
   let setupProm : IO.Promise ImportsSetup ← IO.Promise.new
   let setup stx := do
     -- change begin
-    let setup : SetupImportsResult ← do
-      if let some setup := setup? then
-        liftM <| setup.dynlibs.forM Lean.loadDynlib
-        pure {
-          trustLevel
-          package? := setup.package?
-          mainModuleName := setup.name
-          isModule := strictOr setup.isModule stx.isModule
-          imports := setup.imports?.getD stx.imports
-          plugins := plugins ++ setup.plugins
-          importArts := setup.importArts
-          -- override cmdline options with setup options
-          opts := opts.mergeBy (fun _ _ hOpt => hOpt) setup.options.toOptions
-        }
-      else
-        pure {
-          imports := stx.imports
+    let mut setup : SetupImportsResult := {
+          trustLevel := moduleSetup.trustLevel
+          package? := moduleSetup.package?
+          mainModuleName := moduleSetup.mainModuleName
           isModule := stx.isModule
-          mainModuleName, opts, trustLevel, plugins
+          imports := stx.imports
+          -- importArts? should we include in external?
+          plugins := moduleSetup.plugins
+          opts
         }
+    if let some setupChanges := setupChanges? then
+      setup ← setupChanges setup
     setupProm.resolve { setup with stx }
     return .ok setup
     -- change end
   let processor := Language.Lean.process
   let snaps ← processor setup old? ctx
   return (setupProm, snaps)
+
+#check String.Slice.dropPrefix?
 
 end Skimmer
 
@@ -154,6 +177,8 @@ partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
   | .context _ t => t.getSyntax?
   | .hole _      => none
 
+#check String.Slice.length≤
+
 partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
   match t with
   | .node i _    => i.stx
@@ -162,22 +187,21 @@ partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
 
 namespace Lean.Language.Lean
 
-#print IO.Error.noSuchThing
-
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
 -- TODO: why not `elabSnap.infoTree?`?
 def CommandParsedSnapshot.getInfoTree? (snap : CommandParsedSnapshot) : Option InfoTree :=
   snap.elabSnap.infoTreeSnap.get.infoTree?
 
+/-- TODO: eh...just lifts the option to IO -/
 def CommandParsedSnapshot.getInfoTree (snap : CommandParsedSnapshot) : IO InfoTree :=
   snap.getInfoTree?.getDM <| throw (.userError "Could not find infotree.")
 
-/-- Generally the other `stx` fields seem to be `missing`. -/
+/-- Blocks. Generally the other `stx` fields seem to be `missing`. TODO: investigate. am I missing an option or something? -/
 -- TODO: why not `elabSnap.infoTree?`?
 def CommandParsedSnapshot.getSyntax? (snap : CommandParsedSnapshot) : Option Syntax := do
   (← snap.getInfoTree?).getSyntax?
 
-/-- Generally the other `stx` fields seem to be `missing`. -/
+/-- Blocks. Generally the other `stx` fields seem to be `missing`. -/
 -- TODO: why not `elabSnap.infoTree?`?
 def CommandParsedSnapshot.getSyntax (snap : CommandParsedSnapshot) : Syntax :=
   snap.getSyntax?.getD .missing
