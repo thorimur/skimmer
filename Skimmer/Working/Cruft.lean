@@ -1,9 +1,272 @@
 module
 
-import Lean.Elab.Command
+import Lean
+import all Lean.Language.Lean
+public import Lean.Elab.Frontend
+
+open Lean Elab Command
+
+-- #check System.FilePath
+
+-- #check Language.Lean.HeaderParsedSnapshot
+-- #check Language.Snapshot
+-- #check Language.Lean.HeaderParsedSnapshot -- resulting parser state, syntax of header, initial input context (before parsing) for reuse
+-- #check Language.Lean.HeaderProcessedSnapshot -- post-setup/importing, contains initial `Command.State` *and* snapshot of next command
+-- #check Language.Lean.SetupImportsResult
+-- #check Server.FileWorker.setupImports -- not what we want, but an example
+
+#check runFrontend -- this sets things up
+
+
+-- #check Parser.mkInputContext
+
+-- #check Language.ProcessingT -- apparently just allows access to an inputCtx via a reader...?
+
+public section
+
+namespace Skimmer
+
+open Lean Language Lean Elab
+
+-- #check Lean.HeaderProcessedSnapshot -- file headers
+-- #check Elab.HeaderProcessedSnapshot -- definition headers
+
+variable (stx : HeaderSyntax) (mainModuleName : Name) (opts : Options) (trustLevel : UInt32 := 0)
+    (plugins : Array System.FilePath := #[])
+
+/-- Ripped out of `runFrontend` for convenience. Assumes we don't have a `setup` to merge into as `runFrontend` optionally allows. As such, does not need to be monadic. We might want a monadic version if these values are in a convenient monad. -/
+@[inline]
+def runFrontend.setup : SetupImportsResult where
+  imports := stx.imports
+  isModule := stx.isModule
+  mainModuleName
+  opts
+  trustLevel
+  plugins
+
+-- #check Parser.parseHeader
+-- #check HeaderSyntax
+def runFrontend.setupForProcessing (stx : HeaderSyntax) :
+    ProcessingT IO (Except Lean.HeaderProcessedSnapshot SetupImportsResult) :=
+  return .ok <| setup stx mainModuleName opts trustLevel plugins
+/-
+  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
+  -- default to async elaboration; see also `Elab.async` docs
+  let opts := Elab.async.setIfNotSet opts true
+-/
+/-
 
 
 
+-/
+
+
+-- The way snapshots work for commands and such: each one is meant to contain the snapshot of the next command (if there is one). then you can wait on it and such.
+-- We could do this, or we could go digging.
+
+-- TODO: no
+instance : Repr Options where
+  reprPrec _ _ := f!"<options>"
+
+deriving instance Repr, Inhabited for SetupImportsResult
+
+#check ImportArtifacts
+-- #check Lean.Language.Lean.process.parseHeader
+-- #check Lean.Language.Lean.process.processHeader -- sets up env
+-- #check Elab.processHeader
+-- #check Elab.process
+
+-- #check IO.processCommands
+-- #check IO.processCommandsIncrementally -- why do these take Command.State?!
+
+#check SnapshotTask
+
+/-- Like `SetupImportsResult`, but also includes the header syntax. -/
+structure ImportsSetup extends SetupImportsResult where
+  stx : HeaderSyntax
+deriving Repr, Inhabited
+
+/-- The same as `runFrontEnd`, but
+1. stores the `SetupImportsResult` in a promise to grab it later (sigh, wish it was in a snap)
+    TODO: is there a better way?
+2. stops after producing the snapshot tree
+3. does not time
+4. asks for an input context instead of an input and filename
+5. allows the caller to supply `old?` for reuse -/
+protected def runFrontend
+    -- (input : String)
+    -- (fileName : String)
+    (inputCtx : Parser.InputContext)
+    (mainModuleName : Name)
+    (opts : Options := {})
+    (trustLevel : UInt32 := 0)
+    -- (oleanFileName? : Option System.FilePath := none)
+    -- (ileanFileName? : Option System.FilePath := none)
+    -- (jsonOutput : Bool := false)
+    -- (errorOnKinds : Array Name := #[])
+    (plugins : Array System.FilePath := #[])
+    -- (printStats : Bool := false)
+    (setup? : Option ModuleSetup := none)
+    (old? : Option InitialSnapshot := none)
+    : IO (IO.Promise ImportsSetup × InitialSnapshot) := do
+  -- let startTime := (← IO.monoNanosNow).toFloat / 1000000000
+  -- let inputCtx := Parser.mkInputContext input fileName
+  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
+  -- default to async elaboration; see also `Elab.async` docs
+  let opts := Elab.async.setIfNotSet opts true
+  let ctx := { inputCtx with }
+  let setupProm : IO.Promise ImportsSetup ← IO.Promise.new
+  let setup stx := do
+    -- change begin
+    let setup : SetupImportsResult ← do
+      if let some setup := setup? then
+        liftM <| setup.dynlibs.forM Lean.loadDynlib
+        pure {
+          trustLevel
+          package? := setup.package?
+          mainModuleName := setup.name
+          isModule := strictOr setup.isModule stx.isModule
+          imports := setup.imports?.getD stx.imports
+          plugins := plugins ++ setup.plugins
+          importArts := setup.importArts
+          -- override cmdline options with setup options
+          opts := opts.mergeBy (fun _ _ hOpt => hOpt) setup.options.toOptions
+        }
+      else
+        pure {
+          imports := stx.imports
+          isModule := stx.isModule
+          mainModuleName, opts, trustLevel, plugins
+        }
+    setupProm.resolve { setup with stx }
+    return .ok setup
+    -- change end
+  let processor := Language.Lean.process
+  let snaps ← processor setup old? ctx
+  return (setupProm, snaps)
+
+end Skimmer
+
+/-- Gets the syntax of the top-level node, assuming there is one. -/
+partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
+  match t with
+  | .node i _    => i.stx
+  | .context _ t => t.getSyntax?
+  | .hole _      => none
+
+partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
+  match t with
+  | .node i _    => i.stx
+  | .context _ t => t.getSyntax
+  | .hole _      => .missing
+
+namespace Lean.Language.Lean
+
+#print IO.Error.noSuchThing
+
+/-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
+-- TODO: why not `elabSnap.infoTree?`?
+def CommandParsedSnapshot.getInfoTree? (snap : CommandParsedSnapshot) : Option InfoTree :=
+  snap.elabSnap.infoTreeSnap.get.infoTree?
+
+def CommandParsedSnapshot.getInfoTree (snap : CommandParsedSnapshot) : IO InfoTree :=
+  snap.getInfoTree?.getDM <| throw (.userError "Could not find infotree.")
+
+/-- Generally the other `stx` fields seem to be `missing`. -/
+-- TODO: why not `elabSnap.infoTree?`?
+def CommandParsedSnapshot.getSyntax? (snap : CommandParsedSnapshot) : Option Syntax := do
+  (← snap.getInfoTree?).getSyntax?
+
+/-- Generally the other `stx` fields seem to be `missing`. -/
+-- TODO: why not `elabSnap.infoTree?`?
+def CommandParsedSnapshot.getSyntax (snap : CommandParsedSnapshot) : Syntax :=
+  snap.getSyntax?.getD .missing
+
+/-- What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
+def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.State :=
+  snap.elabSnap.resultSnap.get.cmdState
+
+/-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
+-- TODO: why not `elabSnap.infoTree?`?
+def CommandParsedSnapshot.getPos (snap : CommandParsedSnapshot) : String.Pos.Raw :=
+  snap.parserState.pos
+
+structure CommandSnaps where
+  headerParserState : Parser.ModuleParserState
+  headerState : Command.State
+  commands : Array CommandParsedSnapshot
+
+
+/-- Gets all of the snapshots for the commands after the initial snapshot (which has information from just after the header has been parsed).
+
+TODO: this is not a permanent design. Ideally we want to dispatch work as soon as the snap becomes available, so we want some sort of binding or mapping on the `SnapshotTask` instead of these blocking `get`s.
+
+If we even continue to use snapshots at all, that is. But the incremental reuse is probably good for the computer while editing just as it is for the human.
+-/
+partial def InitialSnapshot.toCommandSnaps (snap : InitialSnapshot) :
+    Option CommandSnaps := do
+  -- Unfortunately this seems throw away nearly everything?
+  let snap ← snap.result?
+  let processedState ← snap.processedSnap.get.result? -- blocks
+  return {
+    headerParserState := snap.parserState
+    headerState := processedState.cmdState
+    commands := go processedState.firstCmdSnap.get #[]
+  }
+where
+  go (snap : CommandParsedSnapshot) (cmds : Array CommandParsedSnapshot) :=
+    if let some next := snap.nextCmdSnap? then
+      go next.get (cmds.push snap)
+    else
+      cmds.push snap
+
+
+-- Question: if new imports run new initializers, is it the case that we tear down the whole process when imports change? I feel like I read this somewhere.
+#check IO.processCommandsIncrementally
+/-
+partial def IO.processCommandsIncrementally (inputCtx : Parser.InputContext)
+    (parserState : Parser.ModuleParserState) (commandState : Command.State)
+    (old? : Option IncrementalState) :
+    BaseIO IncrementalState := do
+  let task ← Language.Lean.processCommands inputCtx parserState commandState
+    (old?.map fun old => (old.inputCtx, old.initialSnap))
+  go task.get task #[]
+where
+  go initialSnap t commands :=
+    let snap := t.get
+    let commands := commands.push snap
+    if let some next := snap.nextCmdSnap? then
+      go initialSnap next.task commands
+    else
+      -- Opting into reuse also enables incremental reporting, so make sure to collect messages from
+      -- all snapshots
+      let messages := toSnapshotTree initialSnap
+        |>.getAll.map (·.diagnostics.msgLog)
+        |>.foldl (· ++ ·) {}
+      -- In contrast to messages, we should collect info trees only from the top-level command
+      -- snapshots as they subsume any info trees reported incrementally by their children.
+      let trees := commands.map (·.elabSnap.infoTreeSnap.get.infoTree?) |>.filterMap id |>.toPArray'
+      return {
+        commandState := { snap.elabSnap.resultSnap.get.cmdState with messages, infoState.trees := trees }
+        parserState := snap.parserState
+        cmdPos := snap.parserState.pos
+        commands := commands.map (·.stx)
+        inputCtx, initialSnap
+      }
+-/
+#check waitForFinalCmdState?
+/-
+/-- Waits for and returns final command state, if importing was successful. -/
+partial def waitForFinalCmdState? (snap : InitialSnapshot) : Option Command.State := do
+  let snap ← snap.result?
+  let snap ← snap.processedSnap.get.result?
+  goCmd snap.firstCmdSnap.get
+where goCmd snap :=
+  if let some next := snap.nextCmdSnap? then
+    goCmd next.get
+  else
+    snap.elabSnap.resultSnap.get.cmdState
+-/
 
 /-
 It's going to have the following flow
@@ -26,6 +289,35 @@ header syntax + parser state
  ↓ "elab"
 `Import`s (module names + modifiers)
 
+  [future] might want to go full snapshot when doing the real thing, especially for reusing changes to imports. not necessary here.
+-/
+
+structure HeaderParsed where
+  inputCtx : Parser.InputContext
+  parserState : Parser.ModuleParserState -- just a position and whether we're recovering
+  stx : HeaderSyntax
+  imports : Array Import
+  isModule : Bool
+  messages : MessageLog
+
+-- confused by filename. Is it a `System.FilePath` or what? TODO: clarify/standardize here.
+-- convenience function
+def parseHeaderToSetup (input fileName : String) : IO HeaderParsed := do
+  let inputCtx := Parser.mkInputContext input fileName
+
+  let (stx, parserState, messages) ← Parser.parseHeader inputCtx
+  let stx : HeaderSyntax := stx -- type synonym
+  return {
+    inputCtx
+    parserState
+    stx
+    imports := stx.imports
+    isModule := stx.isModule
+    messages
+  }
+
+
+/-
 ----
 We also need the previous data.
 
@@ -97,6 +389,8 @@ module
 ...
 
 -/
+
+
 /-
 # Environment fluency
 
