@@ -60,7 +60,7 @@ instance : ToMessageData Syntax.Range where
 /-- Assumes `edits` is sorted, and the ranges are disjoint. -/
 def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
   let mut out : String := ""
-  let mut prevEndPos : text.ValidPos := text.startValidPos
+  let mut prevEndPos : text.Pos := text.startPos
   for edit in edits do -- note: already sorted
     let some slice := edit.range.toSliceOf? text | continue -- TODO: trace/error
     if h : prevEndPos ≤ slice.startInclusive then
@@ -72,7 +72,7 @@ def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
       out := out ++ edit.replacement
       prevEndPos := slice.endExclusive
     -- TODO: trace/error if not
-  out := out ++ text.replaceStart prevEndPos
+  out := out ++ text.sliceFrom prevEndPos
   return out
 
 /-- Assumes `edits` is sorted, and the ranges are disjoint. -/
@@ -80,7 +80,7 @@ def String.applyEditsWithTracing {m}
     [Monad m] [MonadTrace m] [MonadOptions m] [MonadRef m] [AddMessageContext m]
     (text : String) (edits : Array Edit) : m String := do
   let mut out : String := ""
-  let mut prevEndPos : text.ValidPos := text.startValidPos
+  let mut prevEndPos : text.Pos := text.startPos
   let mut successCount := 0
   for edit in edits do -- note: already sorted
     let some slice := edit.range.toSliceOf? text
@@ -101,10 +101,10 @@ def String.applyEditsWithTracing {m}
       trace[Skimmer.Edit.Error] "❌{edit.range} Overlaps with previous edit ending at \
         {prevEndPos.offset}\n\
         Summary of previous edit:\n\
-        - {repr <| (text.replaceEnd prevEndPos).summarizeLast 10}\n\
+        - {repr <| (text.sliceTo prevEndPos).summarizeLast 10}\n\
         + {repr <| out.toSlice.summarizeLast 10}"
     -- TODO: trace/error if not
-  out := out ++ text.replaceStart prevEndPos
+  out := out ++ text.sliceFrom prevEndPos
   if successCount = edits.size then
     trace[Skimmer.Edit] "Successfully applied all {edits.size} \
       edit{if edits.size = 1 then "" else "s"}"
@@ -122,7 +122,7 @@ def String.applyEditsWithTracing {m}
 /-- Brackets the ranges in `ranges`. Assumes the ranges are already sorted and are disjoint. -/
 def String.bracketRanges (text : String) (ranges : Array Syntax.Range) : String := Id.run do
   let mut out : String := ""
-  let mut prevEndPos := text.startValidPos
+  let mut prevEndPos := text.startPos
   for range in ranges do
     -- Technically, we don't need the slice, but usi
     let some slice := range.toSliceOf? text | continue
@@ -138,7 +138,7 @@ def String.bracketRanges (text : String) (ranges : Array Syntax.Range) : String 
       out := out ++ slice.toSlice
       out := out ++ "⟫"
       prevEndPos := slice.endExclusive
-  out := out ++ text.replaceStart prevEndPos
+  out := out ++ text.sliceFrom prevEndPos
   return out
 
 instance : ToMessageData Edit where
