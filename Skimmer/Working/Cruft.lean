@@ -166,6 +166,8 @@ protected def runFrontend
   let snaps ← processor setup old? ctx
   return (setupProm, snaps)
 
+-- TODO: currently `setup` is bound up in `Language.Lean.process`. Might be nice to split it out and only continue to fill the snaps when we want to.
+
 #check String.Slice.dropPrefix?
 
 end Skimmer
@@ -177,13 +179,39 @@ partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
   | .context _ t => t.getSyntax?
   | .hole _      => none
 
-#check String.Slice.length≤
+#check PartialContextInfo
 
+/-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
 partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
   match t with
   | .node i _    => i.stx
   | .context _ t => t.getSyntax
   | .hole _      => .missing
+
+#check CommandContextInfo
+-- Not actually the env before
+-- /-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
+-- partial def Lean.Elab.InfoTree.getEnvBefore? (t : InfoTree) : Option Environment :=
+--   match t with
+--   | .node _ ts    => ts.findSome? (·.getEnvBefore?) --bad?
+--   | .context (.commandCtx info) _ => info.env
+--   | .context _ t => t.getEnvBefore? -- shouldn't happen?
+--   | .hole _      => none
+
+partial def Lean.Elab.InfoTree.getEnv? (t : InfoTree) : Option Environment :=
+  match t with
+  | .node _ ts    => ts.findSome? (·.getEnv?) --bad?
+  | .context (.commandCtx info) _ => info.env
+  | .context _ t => t.getEnv? -- shouldn't happen?
+  | .hole _      => none
+
+/-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
+partial def Lean.Elab.InfoTree.getEnvAfter? (t : InfoTree) : Option Environment :=
+  match t with
+  | .node _ ts    => ts.findSome? (·.getEnvAfter?) --bad?
+  | .context (.commandCtx info) _ => info.cmdEnv?
+  | .context _ t => t.getEnvAfter? -- shouldn't happen?
+  | .hole _      => none
 
 namespace Lean.Language.Lean
 
@@ -192,21 +220,29 @@ namespace Lean.Language.Lean
 def CommandParsedSnapshot.getInfoTree? (snap : CommandParsedSnapshot) : Option InfoTree :=
   snap.elabSnap.infoTreeSnap.get.infoTree?
 
-/-- TODO: eh...just lifts the option to IO -/
-def CommandParsedSnapshot.getInfoTree (snap : CommandParsedSnapshot) : IO InfoTree :=
-  snap.getInfoTree?.getDM <| throw (.userError "Could not find infotree.")
+def CommandParsedSnapshot.getInfoTree! (snap : CommandParsedSnapshot) : InfoTree :=
+  snap.getInfoTree?.get!
+
+-- /-- TODO: eh...just lifts the option to IO -/
+-- def CommandParsedSnapshot.getInfoTree (snap : CommandParsedSnapshot) : IO InfoTree :=
+--   snap.getInfoTree?.getDM <| throw (.userError "Could not find infotree.")
 
 /-- Blocks. Generally the other `stx` fields seem to be `missing`. TODO: investigate. am I missing an option or something? -/
 -- TODO: why not `elabSnap.infoTree?`?
 def CommandParsedSnapshot.getSyntax? (snap : CommandParsedSnapshot) : Option Syntax := do
   (← snap.getInfoTree?).getSyntax?
 
-/-- Blocks. Generally the other `stx` fields seem to be `missing`. -/
+/-- Blocks. Gets the syntax Generally the other `stx` fields seem to be `missing`. -/
 -- TODO: why not `elabSnap.infoTree?`?
 def CommandParsedSnapshot.getSyntax (snap : CommandParsedSnapshot) : Syntax :=
-  snap.getSyntax?.getD .missing
+  snap.getInfoTree?.elim .missing (·.getSyntax)
 
-/-- What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
+/--
+Gets the command state *after* the command has been elaborated.
+
+Can find the environment *before* elaboration in root context of infotrees.
+
+What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
 def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.State :=
   snap.elabSnap.resultSnap.get.cmdState
 
