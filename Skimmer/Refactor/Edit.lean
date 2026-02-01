@@ -27,6 +27,7 @@ Possibly, we want to construct this at the end instead of `qsort`ing to avoid ti
 structure Skimmer.Edit where
   range : Syntax.Range
   replacement : String
+  shouldReview : Bool := false
 deriving Inhabited, BEq, Repr
 
 open Skimmer
