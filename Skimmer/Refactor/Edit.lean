@@ -70,7 +70,12 @@ def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
         startInclusive := prevEndPos
         endExclusive := slice.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
-      out := out ++ edit.replacement
+      if edit.shouldReview then
+        -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
+        out := out ++ s!"review% ({text} => {edit.replacement})"
+        -- TODO NOW: maybe log something?
+      else
+        out := out ++ edit.replacement
       prevEndPos := slice.endExclusive
     -- TODO: trace/error if not
   out := out ++ text.sliceFrom prevEndPos
@@ -95,7 +100,12 @@ def String.applyEditsWithTracing {m}
         startInclusive := prevEndPos
         endExclusive := slice.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
-      out := out ++ edit.replacement
+      if edit.shouldReview then
+        -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
+        out := out ++ s!"review% ({text} => {edit.replacement})"
+        -- TODO NOW: maybe log something?
+      else
+        out := out ++ edit.replacement
       prevEndPos := slice.endExclusive
       successCount := successCount + 1
     else
