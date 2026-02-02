@@ -29,3 +29,7 @@ require "leanprover-community" / batteries @ git "main"
   root := `Skimmer.Working.Main
   supportInterpreter := true
   leanOptions := #[⟨`experimental.module, true⟩]
+
+lean_lib WorkingTest where
+  globs := #[`WorkingTest.+]
+  leanOptions := #[⟨`experimental.module, true⟩]
