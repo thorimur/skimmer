@@ -208,9 +208,7 @@ public def main : IO Unit := do
   let ws ← IO.loadWorkspace
   let pkg := ws.root
   for lib in pkg.leanLibs do
-    -- IO.println s!"{lib.name}"
-    if lib.name == `Skimmer.Working then
-      for mod in ← lib.getModuleArray do
-        -- IO.println s!"  {mod}"
-
-        refactor mod ws
+    IO.println s!"{lib.name}"
+    for mod in ← lib.getModuleArray do
+      IO.println s!"  {mod}"
+      refactor mod ws
