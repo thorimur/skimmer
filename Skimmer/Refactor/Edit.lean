@@ -63,20 +63,20 @@ def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
   let mut out : String := ""
   let mut prevEndPos : text.Pos := text.startPos
   for edit in edits do -- note: already sorted
-    let some slice := edit.range.toSliceOf? text | continue -- TODO: trace/error
-    if h : prevEndPos ≤ slice.startInclusive then
+    let some replaced := edit.range.toSliceOf? text | continue -- TODO: trace/error
+    if h : prevEndPos ≤ replaced.startInclusive then
       out := out ++ {
         str := text
         startInclusive := prevEndPos
-        endExclusive := slice.startInclusive
+        endExclusive := replaced.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
       if edit.shouldReview then
         -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
-        out := out ++ s!"review% ({text} => {edit.replacement})"
+        out := out ++ s!"review% ({replaced.toSlice} => {edit.replacement})"
         -- TODO NOW: maybe log something?
       else
         out := out ++ edit.replacement
-      prevEndPos := slice.endExclusive
+      prevEndPos := replaced.endExclusive
     -- TODO: trace/error if not
   out := out ++ text.sliceFrom prevEndPos
   return out
@@ -89,24 +89,24 @@ def String.applyEditsWithTracing {m}
   let mut prevEndPos : text.Pos := text.startPos
   let mut successCount := 0
   for edit in edits do -- note: already sorted
-    let some slice := edit.range.toSliceOf? text
+    let some replaced := edit.range.toSliceOf? text
       | trace[Skimmer.Edit.Error] "💥{edit.range} Invalid positions"
         -- TODO: show enclosing string; handle past-the-end; handle ¬(start ≤ stop)
         continue
-    trace[Skimmer.Edit] "{edit.range}\n- {repr slice.toSlice.copy}\n+ {repr edit.replacement}"
-    if h : prevEndPos ≤ slice.startInclusive then
+    trace[Skimmer.Edit] "{edit.range}\n- {repr replaced.toSlice.copy}\n+ {repr edit.replacement}"
+    if h : prevEndPos ≤ replaced.startInclusive then
       out := out ++ {
         str := text
         startInclusive := prevEndPos
-        endExclusive := slice.startInclusive
+        endExclusive := replaced.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
       if edit.shouldReview then
         -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
-        out := out ++ s!"review% ({text} => {edit.replacement})"
+        out := out ++ s!"review% ({replaced.toSlice} => {edit.replacement})"
         -- TODO NOW: maybe log something?
       else
         out := out ++ edit.replacement
-      prevEndPos := slice.endExclusive
+      prevEndPos := replaced.endExclusive
       successCount := successCount + 1
     else
       trace[Skimmer.Edit.Error] "❌{edit.range} Overlaps with previous edit ending at \
