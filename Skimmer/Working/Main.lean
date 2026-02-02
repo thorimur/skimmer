@@ -109,7 +109,6 @@ def exeName := "working"
 deriving instance ToJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
 deriving instance FromJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
 
-
 -- Given a `usage : Syntax`, we need to get the info from the infotree of *the part that the ident looks at* for the expected type. This depends I think. Then we get the expected type, make replacements, see if it all works out.
 
 def _root_.String.Pos.Raw.rangeAt (pos : String.Pos.Raw) : Syntax.Range := ⟨pos, pos⟩
@@ -121,10 +120,9 @@ def _root_.String.Pos.Raw.rangeAt (pos : String.Pos.Raw) : Syntax.Range := ⟨po
 -- instance : Repr Language.Lean.CommandParsedSnapshot where
 --   reprPrec snap _ := s!"{snap.desc}: [{snap.stx}] {snap.elabSnap.elabSnap.get}"
 open Skimmer in
-public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
+public def refactor (mod : Lake.Module) : IO Unit := do
   initSearchPath (← findSysroot)
   let source ← IO.FS.readFile mod.leanFile
-  IO.println s!"source: {source == sourceFileDummy}"
   let inputCtx := Parser.mkInputContext source mod.name.toString -- TODO check if correct
   let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := mod.name }
   -- IO.println setup.result!.get.imports
@@ -147,7 +145,7 @@ public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
     -- if snap.getState.messages.hasErrors then
     --   IO.eprintln s!"Errors:\n{← snap.getState.messages.toArray.mapM (·.toString)}"
     -- TODO: could be useful to run in new state, but this is really a subprocess-version problem.
-    IO.println s!"++++\nrunning snap at '{snap.getSyntax.reprint!.take 30}...'"
+    -- IO.println s!"++++\nrunning snap at '{snap.getSyntax.reprint!.take 30}...'"
     match ← snap.runCommandElabM' inputCtx <| refactorDeprecated.post replacements edits with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
     | .ok (replacements', edits') =>
@@ -207,7 +205,13 @@ def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
   let some ws ← (Lake.loadWorkspace cfg).toBaseIO | throw <| IO.userError "workspace load failed"
   return ws
 
-
+public def main (args : List String) : IO Unit := do
+  let ws ← IO.loadWorkspace
+  let [src] := args | throw (.userError s!"Expected a single argument, got {args}")
+  let filePath := System.FilePath.mk src
+  let some mod := ws.findModuleBySrc? filePath
+    | throw (.userError "Couldn't find module!")
+  refactor mod
 -- currently we'll only support globs and no imports/file dependencies. because we want to use lake eventually anyway. fine.
 public def main (args : List String): IO Unit := do
   let ws ← IO.loadWorkspace
@@ -217,4 +221,4 @@ public def main (args : List String): IO Unit := do
       IO.println (← lib.getModuleArray)
       for mod in ← lib.getModuleArray do
         -- IO.println s!"  {mod}"
-        refactor mod ws
+        refactor mod
