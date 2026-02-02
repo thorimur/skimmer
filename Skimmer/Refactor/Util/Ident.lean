@@ -5,14 +5,16 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public meta import Skimmer.Refactor.Init
 import all Lean.Elab.Declaration
 import Batteries.Tactic.Alias
-import Skimmer.Refactor.Edit
+public import Skimmer.AttrUtil
+public import Skimmer.Refactor.Edit
 
-public meta section
+public meta import Lean.Meta.Tactic.TryThis
 
-open Skimmer Command Lean Meta Elab Term Command
+public section
+
+open Skimmer Lean Meta Elab Term Command
 
 /-! TODO: move all of this somewhere else -/
 
@@ -368,10 +370,10 @@ structure Dive (σ) (α) where
   setup /- arg: import syntax/string -/ (skimported : Array σ) : CommandElabM (σ × α)
 
   /-- With command already executed -/
-  post (cmd : Syntax) (state : σ) (collected : α) : CommandElabM (σ × α)
+  post (state : σ) (collected : α) (cmd : Syntax): CommandElabM (σ × α)
 
   /-- At end of file -/ -- do we need this
-  cleanup (eoi : Syntax) (state : σ) (collected : α) : CommandElabM (σ × α)
+  cleanup (state : σ) (collected : α) (eoi : Syntax) : CommandElabM (σ × α)
 
 def _root_.Lean.Syntax.getEditRange (s : Syntax) [Monad m] [MonadError m] : m Syntax.Range := do
   let some range := s.getRange? true
@@ -415,7 +417,7 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
         if let some newName := newName? then
           replacements := replacements.insert name newName
     return (replacements, #[])
-  post cmd replacements edits := do
+  post replacements edits cmd := do
     -- take care of isolated namespaces/open/end
     if let some r ← transformNamespaceOpenEnd replacements cmd then
       return (replacements, edits.push (← r.toEdit))
@@ -474,7 +476,7 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
         if let some newName := newName? then
           replacements := replacements.insert name newName
     return (replacements, edits)
-  cleanup eoi replacements edits := do
+  cleanup replacements edits eoi := do
     let reviews := edits.any (·.replacement.startsWith "review%")
     if !reviews then return (replacements, edits) else
       -- bad!!! TODO: literally anything else
@@ -508,13 +510,14 @@ def deleteImportSkimmerEdit : Edit := ⟨
 
 
 
-
+-- TODO: needs to accommodate insertions. Separate `review_insertion%` that adds spaces?
+-- TODO: need much much finer control in general.
 syntax (name := reviewTermStx) "review% " "(" term " => " term ")" : term
 
 -- NOW TODO: write in env extension
 -- Hmm, maybe just import demo.lean in the dive file?
 open Lean Elab Term Tactic.TryThis
-@[term_elab Skimmer.reviewTermStx] def elabReviewTerm : TermElab
+@[term_elab Skimmer.reviewTermStx] meta def elabReviewTerm : TermElab
   | stx@`(reviewTermStx| review% ($t₀:term => $t₁:term)), expectedType? => do
     -- NOW TODO: record stx somewhere
     let s ← withoutErrToSorry <| Term.observing <| withSynthesize <| elabTerm t₁ expectedType?
@@ -538,20 +541,20 @@ open Lean Elab Term Tactic.TryThis
 -- HACK: using a ref for Elab.async
 initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
 
-def replaceDeprecatedIdent : Refactor where
-  run cmd := unsafe do
-    logInfo m!"here"
-    let (replacements, edits) ← refactorDeprecated.post cmd (← replacementsRef.take) #[]
-    replacementsRef.set replacements
-    let reviews := edits.any (·.replacement.startsWith "review%")
-    if !reviews then return edits else
-      -- TODO: we only do one of these,  but that is the only reason here is okay.
-      -- bad!!! TODO: literally anything else
-      -- guess that 7 is the start of the line after `module`
-      return edits.push
-        ⟨importInsertionRange, "import Skimmer.Review\n", false⟩
+-- def replaceDeprecatedIdent : Refactor where
+--   run cmd := unsafe do
+--     logInfo m!"here"
+--     let (replacements, edits) ← refactorDeprecated.post (← replacementsRef.take) #[] cmd
+--     replacementsRef.set replacements
+--     let reviews := edits.any (·.replacement.startsWith "review%")
+--     if !reviews then return edits else
+--       -- TODO: we only do one of these,  but that is the only reason here is okay.
+--       -- bad!!! TODO: literally anything else
+--       -- guess that 7 is the start of the line after `module`
+--       return edits.push
+--         ⟨importInsertionRange, "import Skimmer.Review\n", false⟩
 
-initialize addRefactor replaceDeprecatedIdent
+-- initialize addRefactor replaceDeprecatedIdent
 
 syntax (name := diveStx) "dive" ("prepare" ("apply")?)? : command
 
