@@ -27,7 +27,9 @@ Possibly, we want to construct this at the end instead of `qsort`ing to avoid ti
 structure Skimmer.Edit where
   range : Syntax.Range
   replacement : String
-  shouldReview : Bool := false
+  /-- Holds an old version of the replacement that ought to be reviewed. -/
+  shouldReview? : Option String := none -- Note: may be updated relative to the actual old source, if we do not need to review all of the edit.
+  -- TODO: review functionality should be prior to the "raw" edits probably. Further, we need different review no-ops for different syntax categories, and possibly ways to expand to syntax which can be no-op'd. Would be good to have a monad that allowed this, and also allowed getting infotrees cheaply...
 deriving Inhabited, BEq, Repr
 
 open Skimmer
@@ -70,9 +72,9 @@ def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
         startInclusive := prevEndPos
         endExclusive := replaced.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
-      if edit.shouldReview then
+      if let some old := edit.shouldReview? then
         -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
-        out := out ++ s!"review% ({replaced.toSlice} => {edit.replacement})"
+        out := out ++ s!"review% ({old} => {edit.replacement})"
         -- TODO NOW: maybe log something?
       else
         out := out ++ edit.replacement
@@ -100,9 +102,9 @@ def String.applyEditsWithTracing {m}
         startInclusive := prevEndPos
         endExclusive := replaced.startInclusive
         startInclusive_le_endExclusive := h : String.Slice }
-      if edit.shouldReview then
+      if let some old := edit.shouldReview? then
         -- TODO: maybe this should be on the edit constructor side, especially for pretty-printing to the correct width and all. Consider this branch temporary.
-        out := out ++ s!"review% ({replaced.toSlice} => {edit.replacement})"
+        out := out ++ s!"review% ({old} => {edit.replacement})"
         -- TODO NOW: maybe log something?
       else
         out := out ++ edit.replacement

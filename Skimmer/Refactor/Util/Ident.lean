@@ -343,7 +343,7 @@ def transformDeclIdAndCreateDeprecated (cmd : TSyntax ``declaration) (replacemen
   else
     return (replacements, none, some <| deprecation)
 
-#print Declaration
+-- #print Declaration
 -- For now we just replace namespaces dynamically...no state.
 
 -- NOW TODO: initialize name map correctly both at top of file and after each command
@@ -392,16 +392,16 @@ def _root_.Lean.Syntax.getEditRange (s : Syntax) [Monad m] [MonadError m] : m Sy
 -- TODO: need an ambient ref which points to `dive` for good error throwing
 
 def Replacement.toEdit : Replacement → CommandElabM Edit
-  | .compatible old _ s => return ⟨← old.getEditRange, s, false⟩
+  | .compatible old _ s => return ⟨← old.getEditRange, s, none⟩
   | .incompatible old _ s => do
-    return ⟨← old.getEditRange, s, true⟩ -- TODO: completely improve, check if term, etc.
+    return ⟨← old.getEditRange, s, some old.reprint!⟩ -- TODO: completely improve, check if term, etc.
   | .insertCommandAfter cmd inserted => do
     -- TODO: We essentially want to insert after the first double newline. There might be comments on the last line or two of the command, and comments for the next command after a couple newlines. This inserts before *any* trailing info after the command and should be changed.
     let some e := cmd.getTailPos? true | throwError "Could not find tail pos for{indentD cmd}"
     let cmdEndPos : Syntax.Range := ⟨e, e⟩
     -- let trailing := cmd.getTrailing?.map (·.toString) -- trailing can include comments before next command
     let fmt ← liftCoreM <| PrettyPrinter.ppCommand inserted
-    return ⟨cmdEndPos, s!"\n\n{fmt.pretty' (← getOptions) |>.trimAsciiEnd}", false⟩
+    return ⟨cmdEndPos, s!"\n\n{fmt.pretty' (← getOptions) |>.trimAsciiEnd}", none⟩
 
 def _root_.Lean.Elab.TermInfo.runTermElabM (ti : TermInfo) (ctx : ContextInfo) (k : TermElabM α) : CommandElabM α := do
   liftTermElabM do
@@ -508,11 +508,11 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
     -- Hope for no macro weirdness?
     -- process contextinfo to set up currnamespace (replace) + opendecls (replace); get lctx from terminfo for avoiding locals.
 def importSkimmerStr := "import Skimmer.Refaactor.Dive\n"
-def importSkimmerEdit : Edit := ⟨importInsertionRange, "import Skimmer.Refaactor.Dive\n", false⟩
+def importSkimmerEdit : Edit := ⟨importInsertionRange, "import Skimmer.Refaactor.Dive\n", none⟩
 def deleteImportSkimmerEdit : Edit := ⟨
   ⟨byteIdxOfImportInsertion,
   ⟨byteIdxOfImportInsertion.byteIdx + importSkimmerStr.utf8ByteSize⟩⟩,
-  "", false⟩
+  "", none⟩
 
 -- NOW PLAN: insert imports with special write imports. Maybe we do need hardcoded paths.
 
