@@ -1,7 +1,10 @@
 module
 
-import Skimmer.Working.Cruft
-import Skimmer.Refactor.Util.Ident
+public import Skimmer.Working.Cruft
+public import Skimmer.Refactor.Util.Ident
+import Lake
+import Lake.Load.Config
+public import Lake.Load.Workspace
 
 def sourceFileDummy := r#"
 import Lean
@@ -19,8 +22,19 @@ def Foo.not (b : Foo) := Bool.not b
 
 def Foo.notnot (b : Foo) := b.not.not
 
+def Int.flipIf (b : Foo) (i : Int) : Int :=
+  if b then -i else i
+
+@[deprecated Int.flipIf (since := "yesterday")]
+def Foo.flipIf (b : Foo) (i : Int) : Int := i.flipIf
+
+example (b : Foo) : Int := b.flipIf (-3 : Int)
+
 #check Foo"#
 
+-- deriving instance Repr for PackageConfig
+-- deriving instance Repr for Package
+-- deriving instance Repr for Workspace
 
 
 -- import Lean
@@ -68,7 +82,7 @@ def Lean.Language.Lean.CommandParsedSnapshot.runCommandElabM' (ictx : Parser.Inp
   x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getState) |>.toIO'
 
 
-#check Lean.Language.Lean.process
+-- <restore> #check Lean.Language.Lean.process
 -- Seems we pass parserState forward. Not sure why it doesn't seem to make it into the relevant command snaps `parserState.pos` fields.
 /-
     let ctx ← read
@@ -83,24 +97,42 @@ def Lean.Language.Lean.CommandParsedSnapshot.runCommandElabM' (ictx : Parser.Inp
     }
 -/
 
+public def _root_.Lake.Module.oleanSkimmerFile (mod : Lake.Module) : System.FilePath :=
+  mod.leanLibPath "olean.skimmed"
+
+public def _root_.Lake.Module.jsonSkimmerFile (mod : Lake.Module) : System.FilePath :=
+  mod.leanLibPath "json.skimmed"
+
+def exeName := "working"
+
+deriving instance ToJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
+deriving instance FromJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
+
+
 -- Given a `usage : Syntax`, we need to get the info from the infotree of *the part that the ident looks at* for the expected type. This depends I think. Then we get the expected type, make replacements, see if it all works out.
 
 def _root_.String.Pos.Raw.rangeAt (pos : String.Pos.Raw) : Syntax.Range := ⟨pos, pos⟩
 
+-- TODO: (major) We could builk up `Edit` to `DeprecationEdit`, which includes extra data like `review` status. Then refactoring just collapses it down to normal edits. The thing, of course, is that we want *persistent* access to this metadata. And we want ways to handle it.
+-- So we need to *serialize the bulky thing*, and have a way of *registering* this refactor with the overall edit system. This needs to provide (1) any special ways to disply this metadata during the interface (2) an instance of how to transform these into edits. sorting the edits should happena all at once. however, we *do* need meta-handling if there are conflicts. (would it be nice to write down the resolution in the dive file? make merge conflicts first class a la jj?)
+
+-- TODO: make monadic. honestly giving exes access to the lake workspace would be great. or maybe I just want non-lakefile scripts?
 -- instance : Repr Language.Lean.CommandParsedSnapshot where
 --   reprPrec snap _ := s!"{snap.desc}: [{snap.stx}] {snap.elabSnap.elabSnap.get}"
 open Skimmer in
-public def main : IO Unit := do
+public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
   initSearchPath (← findSysroot)
-  let inputCtx := Parser.mkInputContext sourceFileDummy "<dummy>"
+  let source ← IO.FS.readFile mod.leanFile
+  let inputCtx := Parser.mkInputContext source mod.name.toString -- TODO check if correct
   let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := `Dummy }
+  -- IO.println setup.result!.get.imports
   let some { headerParserState, headerState, commands } := snap.toCommandSnaps
     | IO.eprintln "Could not find snaps."
   let some r := setup.result?.get | IO.eprintln "Could not find setup."
     -- turn imports into skimmer build filepaths (do it the basic way for now)
   -- spawn a `lake exe working` on them if they don't exist (lake will do this in the future)
   -- read into `replacements`.
-  IO.println s!"{repr r.stx.raw.getRangeWithTrailing?}; {headerParserState.pos}"
+  -- IO.println s!"{repr r.stx.raw.getRangeWithTrailing?}; {headerParserState.pos}"
   let mut replacements : NameMap Name := {}
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
@@ -128,6 +160,8 @@ public def main : IO Unit := do
   IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
   -- replaceDeprecated (r : NameMap Name) (e : Array String) :=
   --   return (r, e.push s!"another! (foo exists: {(← getEnv).find? `foo |>.isSome})")
+  -- TODO: store replacements in build file for extra things
+  IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
 /-
 Rewrite write-edits:
 
@@ -147,3 +181,34 @@ ToJson, FromJson, and after FromJson, write as usual using paths.
 
 
 -/
+
+
+-- def getTopologicallySortedModulesAux (ws : Lake.Workspace) (mod : Lake.Module) (acc : Array Lake.Module) : Lake.Module :=
+--   let
+
+open Lake System in
+/- temporary before moving to Lake, written by Codex -/
+def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
+  let (elan?, lean?, lake?) ← findInstall?
+  let some lean := lean? | throw <| IO.userError "Lean install not found"
+  let some lake := lake? | throw <| IO.userError "Lake install not found"
+  let env ← (Env.compute lake lean elan? none).toIO .userError
+  let cfg : LoadConfig := {
+    lakeEnv := env
+    wsDir := root
+    relPkgDir := "."
+    relConfigFile := "lakefile.lean"
+  }
+  let some ws ← (Lake.loadWorkspace cfg).toBaseIO | throw <| IO.userError "workspace load failed"
+  return ws
+
+
+-- currently we'll only support globs and no imports/file dependencies. because we want to use lake eventually anyway. fine.
+public def main : IO Unit := do
+  let ws ← IO.loadWorkspace
+  let pkg := ws.root
+  for lib in pkg.leanLibs do
+    IO.println s!"{lib.name}"
+    for mod in ← lib.getModuleArray do
+      IO.println s!"  {mod}"
+      refactor mod ws
