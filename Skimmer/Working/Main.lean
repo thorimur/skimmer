@@ -104,7 +104,7 @@ public def _root_.Lake.Module.oleanSkimmerFile (mod : Lake.Module) : System.File
 public def _root_.Lake.Module.jsonSkimmerFile (mod : Lake.Module) : System.FilePath :=
   mod.leanLibPath "json.skimmed"
 
-def exeName := "working"
+public def exeName := "working"
 
 deriving instance ToJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
 deriving instance FromJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
@@ -221,7 +221,7 @@ public def main (args : List String): IO Unit := do
       if args.isEmpty || args.contains lib.name.toString then
         IO.println (← lib.getModuleArray)
         for mod in ← lib.getModuleArray do
-          -- IO.println s!"  {mod}"
+          IO.println s!"  {mod.jsonSkimmerFile}"
           let e ← IO.Process.spawn {
             cmd := "lake"
             args := #["exe", exeName, "--one", s!"'{mod.leanFile.toString}'"]

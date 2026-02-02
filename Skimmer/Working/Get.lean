@@ -9,6 +9,10 @@ public import Skimmer.Working.Main
 
 open Lean Elab Command Language.Lean
 
-def Lake.Module.getRecordedEdits (mod : Lake.Module) : IO (Array Skimmer.Edit) := do
+public def getRecordedEdits (modBuild : System.FilePath) : IO (Array Skimmer.Edit) := do
+  let json ← .ofExcept <| Json.parse (← IO.FS.readFile modBuild)
+  .ofExcept <| fromJson? json
+
+public def Lake.Module.getRecordedEdits (mod : Lake.Module) : IO (Array Skimmer.Edit) := do
   let json ← .ofExcept <| Json.parse (← IO.FS.readFile mod.jsonSkimmerFile)
   .ofExcept <| fromJson? json

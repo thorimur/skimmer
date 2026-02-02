@@ -21,6 +21,10 @@ require "leanprover-community" / batteries @ git "main"
   globs := #[`SkimmerExtra.+]
   leanOptions := #[⟨`experimental.module, true⟩]
 
+@[default_target] lean_lib SkimmerHub where
+  globs := #[`SkimmerExtra.+]
+  leanOptions := #[⟨`experimental.module, true⟩]
+
 @[default_target] lean_exe write_edits where
   root := `Skimmer.Execute
   leanOptions := #[⟨`experimental.module, true⟩]
