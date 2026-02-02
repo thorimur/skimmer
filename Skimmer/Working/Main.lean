@@ -154,7 +154,7 @@ public def refactor (mod : Lake.Module) : IO Unit := do
   -- finally write olean.skimmed. don't bother with error handling yet
   -- TODO standardize edits postprocessing as part of what "edits" are. this should be an extensible part of introducing accumulation
   if edits.any (·.shouldReview?.isSome) then
-    edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Review\n", none⟩
+    edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Working.Review\n\n", none⟩
   -- IO.println (edits.map (repr ·.range))
   edits := edits.qsortOrd
   -- IO.println s!"====\nedits: {← (toMessageData edits).toString}"

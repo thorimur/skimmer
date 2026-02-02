@@ -567,7 +567,7 @@ def deleteImportSkimmerEdit : Edit := ⟨
 --       -- bad!!! TODO: literally anything else
 --       -- guess that 7 is the start of the line after `module`
 --       return edits.push
---         ⟨importInsertionRange, "import Skimmer.Review\n", false⟩
+--         ⟨importInsertionRange, "import Skimmer.Working.Review\n", false⟩
 
 -- initialize addRefactor replaceDeprecatedIdent
 
