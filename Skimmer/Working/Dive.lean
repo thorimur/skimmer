@@ -49,7 +49,7 @@ elab_rules : command
       let mut header : String := s!"Prepared refactors for {edits.size} modules.\n"
       for (mod, edit) in edits do
         let reviewStr := if edit.any (·.shouldReview?.isSome) then s!", {edit.countP (·.shouldReview?.isSome)} of which needs review:\n{"\n".intercalate (edit.filter (·.shouldReview?.isSome) |>.map fun { replacement, shouldReview? .. } => "  " ++ shouldReview?.get! ++ " => " ++ replacement).toList }" else "."
-        header := s!"{header}{mod}:\n\nPrepared {edit.size} refactors{reviewStr}\n"
+        header := s!"{header}----\n{mod}:\n\nPrepared {edit.size} refactors{reviewStr}\n"
 
 
       liftCoreM do
