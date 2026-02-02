@@ -1,6 +1,6 @@
 module
 
-public import Skimmer.Working.Cruft
+public import SkimmerWorking.Cruft
 public import Skimmer.Refactor.Util.Ident
 import Lake
 import Lake.Load.Config
