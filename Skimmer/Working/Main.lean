@@ -153,8 +153,8 @@ public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
     IO.println s!"edits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
   -- finally write olean.skimmed. don't bother with error handling yet
   -- TODO standardize edits postprocessing as part of what "edits" are. this should be an extensible part of introducing accumulation
-  if edits.any (·.shouldReview) then
-    edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Review\n", false⟩
+  if edits.any (·.shouldReview?.isSome) then
+    edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Review\n", none⟩
   edits := edits.qsortOrd
   IO.println s!"====\nedits: {repr edits}"
   IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
