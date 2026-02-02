@@ -15,7 +15,7 @@ open Lean Elab Command
 -- #check Language.Lean.SetupImportsResult
 -- #check Server.FileWorker.setupImports -- not what we want, but an example
 
-#check runFrontend -- this sets things up
+-- <restore> #check runFrontend -- this sets things up
 
 
 -- #check Parser.mkInputContext
@@ -71,7 +71,7 @@ instance : Repr Options where
 
 deriving instance Repr, Inhabited for SetupImportsResult
 
-#check ImportArtifacts
+-- <restore> #check ImportArtifacts
 -- #check Lean.Language.Lean.process.parseHeader
 -- #check Lean.Language.Lean.process.processHeader -- sets up env
 -- #check Elab.processHeader
@@ -80,7 +80,7 @@ deriving instance Repr, Inhabited for SetupImportsResult
 -- #check IO.processCommands
 -- #check IO.processCommandsIncrementally -- why do these take Command.State?!
 
-#check SnapshotTask
+-- <restore> #check SnapshotTask
 
 /-- Like `SetupImportsResult`, but also includes the header syntax. -/
 structure ImportsSetup extends SetupImportsResult where
@@ -114,7 +114,7 @@ structure ModuleSetupExternal where
 --   optsChanges : Options → Options := id
 --   isModuleChanges : Bool → Bool := id
 
-#print SetupImportsResult
+-- <restore> #print SetupImportsResult
 
 /-- The same as `runFrontEnd`, but
 1. stores the `SetupImportsResult` in a promise to grab it later (sigh, wish it was in a snap)
@@ -168,7 +168,7 @@ protected def runFrontend
 
 -- TODO: currently `setup` is bound up in `Language.Lean.process`. Might be nice to split it out and only continue to fill the snaps when we want to.
 
-#check String.Slice.dropPrefix?
+-- <restore> #check String.Slice.dropPrefix?
 
 end Skimmer
 
@@ -179,7 +179,7 @@ partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
   | .context _ t => t.getSyntax?
   | .hole _      => none
 
-#check PartialContextInfo
+-- <restore> #check PartialContextInfo
 
 /-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
 partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
@@ -188,7 +188,7 @@ partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
   | .context _ t => t.getSyntax
   | .hole _      => .missing
 
-#check CommandContextInfo
+-- <restore> #check CommandContextInfo
 -- Not actually the env before
 -- /-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
 -- partial def Lean.Elab.InfoTree.getEnvBefore? (t : InfoTree) : Option Environment :=
@@ -285,7 +285,7 @@ where
 
 
 -- Question: if new imports run new initializers, is it the case that we tear down the whole process when imports change? I feel like I read this somewhere.
-#check IO.processCommandsIncrementally
+-- <restore> #check IO.processCommandsIncrementally
 /-
 partial def IO.processCommandsIncrementally (inputCtx : Parser.InputContext)
     (parserState : Parser.ModuleParserState) (commandState : Command.State)
@@ -317,7 +317,7 @@ where
         inputCtx, initialSnap
       }
 -/
-#check waitForFinalCmdState?
+-- <restore> #check waitForFinalCmdState?
 /-
 /-- Waits for and returns final command state, if importing was successful. -/
 partial def waitForFinalCmdState? (snap : InitialSnapshot) : Option Command.State := do
