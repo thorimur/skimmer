@@ -242,12 +242,14 @@ Gets the command state *after* the command has been elaborated. However--no info
 
 What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
 def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.State :=
-  { snap.elabSnap.resultSnap.get.cmdState with infoState := {
+  let cmdState := snap.elabSnap.resultSnap.get.cmdState
+  let infoState := { cmdState.infoState with
       trees := match snap.getInfoTree? with
         | some t => PersistentArray.empty.push t
         | none => {} }
+  { cmdState with infoState := infoState.substituteLazy.get }
       -- TODO: holes? do we need to substitutelazy or anything? what about the other infostate things? really confused by this cmdState.
-  }
+
 
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
 -- TODO: why not `elabSnap.infoTree?`?
