@@ -136,7 +136,6 @@ public def refactor (mod : Lake.Module) : IO Unit := do
   let mut replacements : NameMap Name := {}
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
-    -- IO.println "----"
     -- TODO: none of these capture the error where the date and identifier are flipped. What does?
     -- if snap.isFatal then
     --   IO.eprintln s!"Fatal snap {snap.isFatal}"
@@ -158,13 +157,14 @@ public def refactor (mod : Lake.Module) : IO Unit := do
     edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Review\n", none⟩
   -- IO.println (edits.map (repr ·.range))
   edits := edits.qsortOrd
-  IO.println s!"====\nedits: {← (toMessageData edits).toString}"
-  IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
+  -- IO.println s!"====\nedits: {← (toMessageData edits).toString}"
+  -- -- IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
   IO.println s!"====\n{source.applyEdits edits}"
   -- replaceDeprecated (r : NameMap Name) (e : Array String) :=
   --   return (r, e.push s!"another! (foo exists: {(← getEnv).find? `foo |>.isSome})")
   -- TODO: store replacements in build file for extra things
-  -- IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
+  -- IO.FS. mod.jsonSkimmerFile
+  IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
 /-
 Rewrite write-edits:
 
@@ -205,20 +205,27 @@ def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
   let some ws ← (Lake.loadWorkspace cfg).toBaseIO | throw <| IO.userError "workspace load failed"
   return ws
 
-public def main (args : List String) : IO Unit := do
-  let ws ← IO.loadWorkspace
-  let [src] := args | throw (.userError s!"Expected a single argument, got {args}")
-  let filePath := System.FilePath.mk src
-  let some mod := ws.findModuleBySrc? filePath
-    | throw (.userError "Couldn't find module!")
-  refactor mod
 -- currently we'll only support globs and no imports/file dependencies. because we want to use lake eventually anyway. fine.
 public def main (args : List String): IO Unit := do
   let ws ← IO.loadWorkspace
-  let pkg := ws.root
-  for lib in pkg.leanLibs do
-    if args.isEmpty || args.contains lib.name.toString then
-      IO.println (← lib.getModuleArray)
-      for mod in ← lib.getModuleArray do
-        -- IO.println s!"  {mod}"
-        refactor mod
+  match args with
+  | ["--one", src] =>
+    let filePath := System.FilePath.mk (src.drop 1 |>.dropEnd 1).toString
+    let some mod := ws.findModuleBySrc? filePath
+      | throw (.userError "Couldn't find module!")
+    refactor mod
+  | args =>
+    let pkg := ws.root
+    for lib in pkg.leanLibs do
+      -- DANGER. library must be built first so that writeFile succeeds...
+      if args.isEmpty || args.contains lib.name.toString then
+        IO.println (← lib.getModuleArray)
+        for mod in ← lib.getModuleArray do
+          -- IO.println s!"  {mod}"
+          let e ← IO.Process.spawn {
+            cmd := "lake"
+            args := #["exe", exeName, "--one", s!"'{mod.leanFile.toString}'"]
+          }
+          let exit ← e.wait
+          unless exit = 0 do
+            IO.Process.exit exit.toUInt8 -- what if it overflows to 0?
