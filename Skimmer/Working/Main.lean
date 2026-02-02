@@ -191,7 +191,7 @@ ToJson, FromJson, and after FromJson, write as usual using paths.
 
 open Lake System in
 /- temporary before moving to Lake, written by Codex -/
-def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
+public def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
   let (elan?, lean?, lake?) ← findInstall?
   let some lean := lean? | throw <| IO.userError "Lean install not found"
   let some lake := lake? | throw <| IO.userError "Lake install not found"
