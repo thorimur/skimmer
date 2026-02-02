@@ -159,6 +159,7 @@ inductive IdentReplacement where
 | compatible (i : Ident) (n : Name)
 | incompatible (n : Name)
 | unchangedIdent (i : Ident) (n : Name)
+deriving Repr
 
 /-- We guess a new dotted identifier by seeing if its base is replaced. We don't replace if the resolvedName itself is deprecated -/
 -- TODO: we don't handle `open` decls which may mean that we don't want the prefix per se, but a part of the prefix, e.g. `List` in `Foo.List.map` when `Foo` open
@@ -235,15 +236,16 @@ def transformIdentUsage (usage : Syntax)
   match usage with
   -- TODO: need to handle `@(<app>/other term)` or is that given by infotrees
   | stx@`(Parser.ident| $_:ident) =>
-    IO.println s!"Handling ident {stx.reprint!}"
+    -- IO.println s!"ident: Handling {stx.reprint!} for {resolvedName}"
     let some newName := replacements.get? resolvedName | return none
     return some <| .compatible stx (mkIdentFrom stx newName) newName.toString
 
   -- | `(explicit| @%$atSign$i:ident) => return (replacements, none) -- TODO
   | stx@`(dotIdent| .$i:ident) =>
   -- `Term.proj` (`(e).id`) is similar
-    IO.println s!"Handling dotIdent {stx.reprint!}"
+    -- IO.println s!"dotIdent: Handling {stx.reprint!} for {resolvedName}"
     let some r := guessNewDottedIdent i resolvedName replacements | return none
+    -- IO.println s!"dotIdent: Guessing {repr r}"
     if _h : r matches .unchangedIdent .. then return none else
       match r with
       | .compatible newIdent n => return some (.compatible i newIdent n.toString)
@@ -410,7 +412,7 @@ def _root_.Lean.Elab.TermInfo.runTermElabM (ti : TermInfo) (ctx : ContextInfo) (
     Meta.withLocalInstances (ti.lctx.decls.toList.filterMap id) do
       -- TODO: handle internal namespacing and opens from ctx
       k
-#check InfoTree.format
+
 def byteIdxOfImportInsertion : String.Pos.Raw := ⟨7⟩
 def importInsertionRange : Syntax.Range := ⟨byteIdxOfImportInsertion, byteIdxOfImportInsertion⟩
 
@@ -469,7 +471,7 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
       if stx.isIdent || stx.isOfKind ``dotIdent then
         idents := idents.push stx
     let ranges := idents.map (fun i => i.getRange? true |>.map (i,·)) |>.reduceOption
-
+    -- dbg_trace s!"ranges: {ranges.map (·.1.reprint!)}"
     -- for depr in newDeprs do
     --   if let some newName := newName? then
     --     replacements := replacements.insert name newName
@@ -477,9 +479,13 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
       let infos := t.foldInfo (init := #[]) fun ctx info acc =>
         match info with
         | .ofTermInfo ti =>
+          -- dbg_trace s!"!!!{ti.stx.reprint!.trimAscii}"
           if let some n := ti.expr.constName? then
+            -- dbg_trace s!"!!!- const"
             if let some range := ti.stx.getRange? true then
-              if let some (i,_) := ranges.find? (·.2 == range) then
+              -- dbg_trace s!"!!!-- has range"
+              if let some (i,_) := ranges.find? fun identRange => identRange.2.contains range.start || identRange.2.contains range.stop then
+                -- dbg_trace "!!!--- saved"
                 acc.push (i, n, ti, ctx)
               else acc
             else acc
@@ -545,34 +551,10 @@ def deleteImportSkimmerEdit : Edit := ⟨
 
 -- TODO: needs to accommodate insertions. Separate `review_insertion%` that adds spaces?
 -- TODO: need much much finer control in general.
-syntax (name := reviewTermStx) "review% " "(" term " => " term ")" : term
 
--- NOW TODO: write in env extension
--- Hmm, maybe just import demo.lean in the dive file?
-open Lean Elab Term Tactic.TryThis
-@[term_elab Skimmer.reviewTermStx] meta def elabReviewTerm : TermElab
-  | stx@`(reviewTermStx| review% ($t₀:term => $t₁:term)), expectedType? => do
-    -- NOW TODO: record stx somewhere
-    let s ← withoutErrToSorry <| Term.observing <| withSynthesize <| elabTerm t₁ expectedType?
-    match s with
-    | .ok e s =>
-      s.restore (restoreInfo := true)
-      let suggestion : SuggestionText :=
-        if let some s := t₁.raw.reprint then .string s else .tsyntax t₁
-      let suggestion : Suggestion := {
-        suggestion
-      }
-      addSuggestion stx suggestion
-        (header := "Generated term is successful. Would you like to accept it?")
-      return e
-    | .error ex _ =>
-      -- TODO: need to restore state for error?
-      logWarningAt t₁ m!"Generated term failed with error:{indentD ex.toMessageData}"
-    elabTerm t₀ expectedType?
-  | _, _ => throwUnsupportedSyntax
 
 -- HACK: using a ref for Elab.async
-initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
+-- initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
 
 -- def replaceDeprecatedIdent : Refactor where
 --   run cmd := unsafe do
@@ -589,7 +571,6 @@ initialize replacementsRef : IO.Ref (NameMap Name) ← IO.mkRef {}
 
 -- initialize addRefactor replaceDeprecatedIdent
 
-syntax (name := diveStx) "dive" ("prepare" ("apply")?)? : command
 
 -- def f : Bool := review% (true => false)
 
