@@ -64,7 +64,6 @@ elab_rules : command
     for mod in modSuffixes do
       let edits ← getRecordedEdits (toBuildFile mod)
       let source ← IO.FS.readFile ("WorkingTest" / s!"{mod.toString}.lean")
-      logInfo m!"{source}"
       IO.FS.writeFile ("WorkingTest" / s!"{mod.toString}.lean") (source.applyEdits edits)
       IO.FS.writeFile (toBuildFile mod) ""
       logInfo m!"Wrote {edits.size} edits to {mod}."
