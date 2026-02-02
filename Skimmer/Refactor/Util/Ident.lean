@@ -410,9 +410,21 @@ def _root_.Lean.Elab.TermInfo.runTermElabM (ti : TermInfo) (ctx : ContextInfo) (
     Meta.withLocalInstances (ti.lctx.decls.toList.filterMap id) do
       -- TODO: handle internal namespacing and opens from ctx
       k
-
+#check InfoTree.format
 def byteIdxOfImportInsertion : String.Pos.Raw := ⟨7⟩
 def importInsertionRange : Syntax.Range := ⟨byteIdxOfImportInsertion, byteIdxOfImportInsertion⟩
+
+-- stolen from InfoTree.format
+def formatStxRange (ctx : ContextInfo) (stx : Syntax) : Format :=
+  let pos    := stx.getPos?.getD 0
+  let endPos := stx.getTailPos?.getD pos
+  f!"{fmtPos pos stx.getHeadInfo}-{fmtPos endPos stx.getTailInfo}"
+where fmtPos pos info :=
+  let pos := format <| ctx.fileMap.toPosition pos
+  match info with
+  | .original ..                      => pos
+  | .synthetic (canonical := true) .. => f!"{pos}†!"
+  | _                                 => f!"{pos}†"
 
 deriving instance Repr for Linter.DeprecationEntry
 
@@ -449,9 +461,11 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
     -- NOW TODO: traverse infotrees, get original idents and dotidents, replace namespaces + open decls beforehand. don't worry about these changing within the command yet (TODO)
     -- TODO: remove hack: ignore declId
     let mut idents : Array Syntax := #[]
-    let declId? := if cmd.isOfKind ``declaration then some cmd[1][1] else none
+    let declId : Syntax.Range :=
+      if cmd.isOfKind ``declaration then cmd[1][1].getRangeWithTrailing?.getD default else default
     for stx in cmd.topDown do
-      if some stx == declId? then continue -- skip declId for now
+      if let some range := stx.getRangeWithTrailing? then
+        if declId.contains range.start || declId.contains range.stop then continue -- skip declId for now
       if stx.isIdent || stx.isOfKind ``dotIdent then
         idents := idents.push stx
     let ranges := idents.map (fun i => i.getRange? true |>.map (i,·)) |>.reduceOption
@@ -482,9 +496,14 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
       --       | .simple ns e => .simple (replaceName ns) e
       --       | .explicit i n => .explicit (replaceName i) (replaceName n) }
       --   }
-
+      let mut considered : Std.HashSet Syntax.Range := {}
       for (i, n, ti, ctx) in infos do
-        IO.println s!"investigating {n} at [{i.reprint.getD "<noreprint>"}]"
+        IO.println s!"investigating {n} at [{i.reprint.getD "<noreprint>"}]:{formatStxRange ctx ti.stx}"
+        if let some range := ti.stx.getRange? then
+          if considered.contains range then
+            continue
+          else
+            considered := considered.insert range
         let some r ← ti.runTermElabM ctx do transformIdentUsage i n replacements
           | IO.println s!"skipping {n}"; continue -- NOW TODO: trace
         edits := edits.push <|← r.toEdit

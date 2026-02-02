@@ -23,14 +23,15 @@ def Foo.not (b : Foo) := Bool.not b
 def Foo.notnot (b : Foo) := b.not.not
 
 def Int.flipIf (b : Foo) (i : Int) : Int :=
-  if b then -i else i
+  bif b then -i else i
 
 @[deprecated Int.flipIf (since := "yesterday")]
 def Foo.flipIf (b : Foo) (i : Int) : Int := i.flipIf
 
 example (b : Foo) : Int := b.flipIf (-3 : Int)
 
-#check Foo"#
+#check Foo
+"#
 
 -- deriving instance Repr for PackageConfig
 -- deriving instance Repr for Package
@@ -123,8 +124,9 @@ open Skimmer in
 public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
   initSearchPath (← findSysroot)
   let source ← IO.FS.readFile mod.leanFile
+  IO.println s!"source: {source == sourceFileDummy}"
   let inputCtx := Parser.mkInputContext source mod.name.toString -- TODO check if correct
-  let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := `Dummy }
+  let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := mod.name }
   -- IO.println setup.result!.get.imports
   let some { headerParserState, headerState, commands } := snap.toCommandSnaps
     | IO.eprintln "Could not find snaps."
@@ -136,7 +138,7 @@ public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
   let mut replacements : NameMap Name := {}
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
-    IO.println "----"
+    -- IO.println "----"
     -- TODO: none of these capture the error where the date and identifier are flipped. What does?
     -- if snap.isFatal then
     --   IO.eprintln s!"Fatal snap {snap.isFatal}"
@@ -145,23 +147,26 @@ public def refactor (mod : Lake.Module) (ws : Lake.Workspace) : IO Unit := do
     -- if snap.getState.messages.hasErrors then
     --   IO.eprintln s!"Errors:\n{← snap.getState.messages.toArray.mapM (·.toString)}"
     -- TODO: could be useful to run in new state, but this is really a subprocess-version problem.
+    IO.println s!"++++\nrunning snap at '{snap.getSyntax.reprint!.take 30}...'"
     match ← snap.runCommandElabM' inputCtx <| refactorDeprecated.post replacements edits with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
     | .ok (replacements', edits') =>
       replacements := replacements'
       edits := edits'
-    IO.println s!"edits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
+    -- IO.println s!"edits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
   -- finally write olean.skimmed. don't bother with error handling yet
   -- TODO standardize edits postprocessing as part of what "edits" are. this should be an extensible part of introducing accumulation
   if edits.any (·.shouldReview?.isSome) then
     edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Review\n", none⟩
+  -- IO.println (edits.map (repr ·.range))
   edits := edits.qsortOrd
-  IO.println s!"====\nedits: {repr edits}"
+  IO.println s!"====\nedits: {← (toMessageData edits).toString}"
   IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
+  IO.println s!"====\n{source.applyEdits edits}"
   -- replaceDeprecated (r : NameMap Name) (e : Array String) :=
   --   return (r, e.push s!"another! (foo exists: {(← getEnv).find? `foo |>.isSome})")
   -- TODO: store replacements in build file for extra things
-  IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
+  -- IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
 /-
 Rewrite write-edits:
 
@@ -204,11 +209,12 @@ def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
 
 
 -- currently we'll only support globs and no imports/file dependencies. because we want to use lake eventually anyway. fine.
-public def main : IO Unit := do
+public def main (args : List String): IO Unit := do
   let ws ← IO.loadWorkspace
   let pkg := ws.root
   for lib in pkg.leanLibs do
-    IO.println s!"{lib.name}"
-    for mod in ← lib.getModuleArray do
-      IO.println s!"  {mod}"
-      refactor mod ws
+    if args.isEmpty || args.contains lib.name.toString then
+      IO.println (← lib.getModuleArray)
+      for mod in ← lib.getModuleArray do
+        -- IO.println s!"  {mod}"
+        refactor mod ws
