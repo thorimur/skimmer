@@ -1,11 +1,11 @@
 module
 
-public import SkimmerWorking.Cruft
+public import Skimmer.Working.Cruft
 public import Skimmer.Refactor.Util.Ident
 import Lake
 import Lake.Load.Config
 public import Lake.Load.Workspace
-public import SkimmerWorking.Main
+public import Skimmer.Working.Main
 
 open Lean Elab Command Language.Lean
 
