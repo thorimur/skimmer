@@ -53,15 +53,18 @@ elab_rules : command
 
 
       liftCoreM do
-        addSuggestion (mkNullNode #[tk, p]) (header := s!"{header}\nApply refactors?") (s := { suggestion := .string "execute" })
--- | `(command|dive prepare execute) => do
---   let ws ← IO.loadWorkspace
---   for lib in ws.root.leanLibs do
---     if (← refactorLibRef.get).contains lib.name then
-
---       for mod in ← lib.getModuleArray do
---         let edits ← mod.getRecordedEdits
---         let source ← IO.FS.readFile mod.leanFile
---         IO.FS.writeFile mod.leanFile (source.applyEdits edits)
---         IO.FS.writeFile mod.jsonSkimmerFile ""
---         logInfo m!"Wrote {edits.size} edits to {mod}."
+        addSuggestion (mkNullNode #[tk, p]) (header := s!"{header}\nApply refactors?") (s := { suggestion := .string "dive\n  prepare\n  execute" })
+| `(command|dive prepare execute) => do
+  -- let ws ← IO.loadWorkspace
+  -- for lib in ws.root.leanLibs do
+  --   if (← refactorLibRef.get).contains lib.name then
+    -- let lib'name := `WorkingTest
+    let toBuildFile s : System.FilePath := ".lake" / "build" /"lib" /"lean"/ "WorkingTest" / s!"{s}.json.skimmed"
+    let modSuffixes := #[`Test, `ReviewTest]
+    for mod in modSuffixes do
+      let edits ← getRecordedEdits (toBuildFile mod)
+      let source ← IO.FS.readFile ("WorkingTest" / s!"{mod.toString}.lean")
+      logInfo m!"{source}"
+      IO.FS.writeFile ("WorkingTest" / s!"{mod.toString}.lean") (source.applyEdits edits)
+      IO.FS.writeFile (toBuildFile mod) ""
+      logInfo m!"Wrote {edits.size} edits to {mod}."
