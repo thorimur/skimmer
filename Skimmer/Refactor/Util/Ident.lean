@@ -192,6 +192,9 @@ inductive Replacement where
 | insertCommandAfter (cmd : Syntax) (insertedCmd : Command)
 deriving Inhabited, Repr
 
+-- temporary
+def _root_.Lean.Syntax.reprint! (stx : Syntax) : String := stx.reprint.getD "<failed to reprint>"
+
 -- TODO: recursive things in foo
 
 -- Mention no info leaves for elab* (elabExplicit, elabIdent, etc.) within elabApp
@@ -228,15 +231,18 @@ def transformIdentUsage (usage : Syntax)
     TermElabM (Option Replacement) := do
   -- TODO: proj
   -- NOW TODO: command context with namespace open decls
+
   match usage with
   -- TODO: need to handle `@(<app>/other term)` or is that given by infotrees
   | stx@`(Parser.ident| $_:ident) =>
+    IO.println s!"Handling ident {stx.reprint!}"
     let some newName := replacements.get? resolvedName | return none
     return some <| .compatible stx (mkIdentFrom stx newName) newName.toString
 
   -- | `(explicit| @%$atSign$i:ident) => return (replacements, none) -- TODO
   | stx@`(dotIdent| .$i:ident) =>
   -- `Term.proj` (`(e).id`) is similar
+    IO.println s!"Handling dotIdent {stx.reprint!}"
     let some r := guessNewDottedIdent i resolvedName replacements | return none
     if _h : r matches .unchangedIdent .. then return none else
       match r with
@@ -244,7 +250,9 @@ def transformIdentUsage (usage : Syntax)
       | .incompatible newName =>
         -- replace dotIdent with normal ident
         return some (.incompatible stx (mkIdentFrom stx newName) newName.toString)
-  | _ => return none
+  | _ =>
+    IO.println s!"Couldn't match {usage.reprint!}"
+    return none
 
   -- | stx =>
   --   -- TODO: explore if syntax quotations can handle this after all
@@ -316,11 +324,12 @@ def transformDeclIdAndCreateDeprecated (cmd : TSyntax ``declaration) (replacemen
         -- new name is the same
         none)
   -- Deprecation command to come afterwards
-  let dateStr ← IO.Process.run { cmd := "date", args := #["+\"%Y-%m-%d\""] }
-  let dateStr := Syntax.mkStrLit dateStr.trimAscii.toString
+  -- let dateStr ← IO.Process.run { cmd := "date", args := #["+\"%Y-%m-%d\""] }
+  -- let dateStr := Syntax.mkStrLit dateStr.trimAscii.toString
+  let dateStr := Syntax.mkStrLit "today"
   let deprecation ← `(command|
-    @[deprecated $(mkCIdent newFullName) (since := $dateStr:str)]
-    alias $(mkCIdent newOldDeclIdName) := $(mkCIdent newFullName))
+    @[deprecated $(mkIdent newFullName) (since := $dateStr:str)]
+    alias $(mkIdent newOldDeclIdName) := $(mkIdent newFullName))
 
   let replacements := replacements.insert oldFullName newFullName
   let declId := cmd.raw[1][1]
@@ -370,7 +379,7 @@ structure Dive (σ) (α) where
   setup /- arg: import syntax/string -/ (skimported : Array σ) : CommandElabM (σ × α)
 
   /-- With command already executed -/
-  post (state : σ) (collected : α) (cmd : Syntax): CommandElabM (σ × α)
+  post (state : σ) (collected : α) (cmd : Syntax) : CommandElabM (σ × α)
 
   /-- At end of file -/ -- do we need this
   cleanup (state : σ) (collected : α) (eoi : Syntax) : CommandElabM (σ × α)
@@ -387,22 +396,25 @@ def Replacement.toEdit : Replacement → CommandElabM Edit
   | .incompatible old _ s => do
     return ⟨← old.getEditRange, s, true⟩ -- TODO: completely improve, check if term, etc.
   | .insertCommandAfter cmd inserted => do
+    -- TODO: We essentially want to insert after the first double newline. There might be comments on the last line or two of the command, and comments for the next command after a couple newlines. This inserts before *any* trailing info after the command and should be changed.
     let some e := cmd.getTailPos? true | throwError "Could not find tail pos for{indentD cmd}"
-    let range : Syntax.Range := ⟨e, e⟩
-    let trailing := cmd.getTrailing?.map (·.toString) -- trailing can include comments before next command
+    let cmdEndPos : Syntax.Range := ⟨e, e⟩
+    -- let trailing := cmd.getTrailing?.map (·.toString) -- trailing can include comments before next command
     let fmt ← liftCoreM <| PrettyPrinter.ppCommand inserted
-    return ⟨range, s!"\n\n{fmt.pretty' (← getOptions)}{trailing.getD ""}", false⟩
+    return ⟨cmdEndPos, s!"\n\n{fmt.pretty' (← getOptions) |>.trimAsciiEnd}", false⟩
 
 def _root_.Lean.Elab.TermInfo.runTermElabM (ti : TermInfo) (ctx : ContextInfo) (k : TermElabM α) : CommandElabM α := do
   liftTermElabM do
   setMCtx ctx.mctx
   withLCtx ti.lctx {} do
-  Meta.withLocalInstances (ti.lctx.decls.toList.filterMap id) do
-  -- TODO: handle internal namespacing and opens from ctx
-  k
+    Meta.withLocalInstances (ti.lctx.decls.toList.filterMap id) do
+      -- TODO: handle internal namespacing and opens from ctx
+      k
 
 def byteIdxOfImportInsertion : String.Pos.Raw := ⟨7⟩
 def importInsertionRange : Syntax.Range := ⟨byteIdxOfImportInsertion, byteIdxOfImportInsertion⟩
+
+deriving instance Repr for Linter.DeprecationEntry
 
 -- Temporary. Will be extensible in some kind of RefactorM
 def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
@@ -443,6 +455,10 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
       if stx.isIdent || stx.isOfKind ``dotIdent then
         idents := idents.push stx
     let ranges := idents.map (fun i => i.getRange? true |>.map (i,·)) |>.reduceOption
+
+    -- for depr in newDeprs do
+    --   if let some newName := newName? then
+    --     replacements := replacements.insert name newName
     for t in ← getInfoTrees do
       let infos := t.foldInfo (init := #[]) fun ctx info acc =>
         match info with
@@ -455,34 +471,32 @@ def refactorDeprecated : Dive (NameMap Name) (Array Edit) where
             else acc
           else acc
         | _ => acc
+      IO.println s!"Got {infos.size} plausible infos."
       -- TODO: also replace inside each run
-      let savedScopes ← getScopes
-      let replaceName (n : Name) := n.replacePrefixSome replacements.get? |>.getD n
-      modify fun s => { s with scopes := s.scopes.map fun scope => { scope with
-          currNamespace := replaceName scope.currNamespace,
-          openDecls := scope.openDecls.map fun
-            | .simple ns e => .simple (replaceName ns) e
-            | .explicit i n => .explicit (replaceName i) (replaceName n) }
-        }
+      -- NOW TODO: don't need, right? see also modify below
+      -- let savedScopes ← getScopes
+      -- let replaceName (n : Name) := n.replacePrefixSome replacements.get? |>.getD n
+      -- modify fun s => { s with scopes := s.scopes.map fun scope => { scope with
+      --     currNamespace := replaceName scope.currNamespace,
+      --     openDecls := scope.openDecls.map fun
+      --       | .simple ns e => .simple (replaceName ns) e
+      --       | .explicit i n => .explicit (replaceName i) (replaceName n) }
+      --   }
+
       for (i, n, ti, ctx) in infos do
+        IO.println s!"investigating {n} at [{i.reprint.getD "<noreprint>"}]"
         let some r ← ti.runTermElabM ctx do transformIdentUsage i n replacements
-          | continue -- NOW TODO: trace
+          | IO.println s!"skipping {n}"; continue -- NOW TODO: trace
         edits := edits.push <|← r.toEdit
-      modify fun s => { s with scopes := savedScopes }
-    -- insert deprecated ones. TODO: cases where the deprecated declaration has itself seen replacements?
-    let d := Linter.deprecatedAttr.ext.getImportedEntries (← getEnv)
-    for mod in d do
-      for (name, { newName?, .. }) in mod do
-        if let some newName := newName? then
-          replacements := replacements.insert name newName
+      -- modify fun s => { s with scopes := savedScopes }
+    -- insert deprecated ones. TODO: cases where the deprecated declaration or new delcaration has itself seen replacements. needs overhaul.
+    let (newDeprs, newDeprMap) := Linter.deprecatedAttr.ext.getState (← getEnv)
+    IO.println s!"Deprecations: {newDeprs}; {repr newDeprMap.toArray}"
+    for (oldName, { newName? .. }) in newDeprMap do
+      if let some newName := newName? then
+        replacements := replacements.insert oldName newName
     return (replacements, edits)
-  cleanup replacements edits eoi := do
-    let reviews := edits.any (·.replacement.startsWith "review%")
-    if !reviews then return (replacements, edits) else
-      -- bad!!! TODO: literally anything else
-      -- guess that 7 is the start of the line after `module`
-      return (replacements, edits.push
-        ⟨importInsertionRange, "import Skimmer.Review\n", false⟩)
+  cleanup replacements edits eoi := pure (replacements, edits)
 
 
 

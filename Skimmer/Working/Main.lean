@@ -3,14 +3,28 @@ module
 import Skimmer.Working.Cruft
 import Skimmer.Refactor.Util.Ident
 
-def sourceFileDummy := "\
+def sourceFileDummy := r#"
 import Lean
+import Batteries.Tactic.Alias
 
 #check Bool.true
 
-def foo : Bool := Bool.true
+def Bar := Bool
 
-#check foo"
+@[deprecated Bar (since := "yesterday")] alias Foo := Bar
+
+def Baz := Foo
+
+def Foo.not (b : Foo) := Bool.not b
+
+def Foo.notnot (b : Foo) := b.not.not
+
+#check Foo"#
+
+
+
+-- import Lean
+-- import Batteries.Tactic.Alias
 
 open Lean Elab Command Language.Lean
 
@@ -39,19 +53,19 @@ variable (x : EIO Exception Bool)
 
 def Lean.Language.Lean.CommandParsedSnapshot.EIO.runCommandElabM (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : EIO Exception (α × State) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.elabSnap.resultSnap.get.cmdState)
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getState)
 
 def Lean.Language.Lean.CommandParsedSnapshot.EIO.runCommandElabM' (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : EIO Exception α := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.elabSnap.resultSnap.get.cmdState)
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getState)
 
 def Lean.Language.Lean.CommandParsedSnapshot.runCommandElabM (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : IO (Except Exception (α × State)) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.elabSnap.resultSnap.get.cmdState) |>.toIO'
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getState) |>.toIO'
 
 def Lean.Language.Lean.CommandParsedSnapshot.runCommandElabM' (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : IO (Except Exception α) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.elabSnap.resultSnap.get.cmdState) |>.toIO'
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getState) |>.toIO'
 
 
 #check Lean.Language.Lean.process
@@ -90,14 +104,21 @@ public def main : IO Unit := do
   let mut replacements : NameMap Name := {}
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
+    IO.println "----"
+    -- TODO: none of these capture the error where the date and identifier are flipped. What does?
+    -- if snap.isFatal then
+    --   IO.eprintln s!"Fatal snap {snap.isFatal}"
+    -- if snap.parserState.recovering then
+    --   IO.eprintln s!"Parser recovering" -- not convinced this will ever be populated
+    -- if snap.getState.messages.hasErrors then
+    --   IO.eprintln s!"Errors:\n{← snap.getState.messages.toArray.mapM (·.toString)}"
     -- TODO: could be useful to run in new state, but this is really a subprocess-version problem.
     match ← snap.runCommandElabM' inputCtx <| refactorDeprecated.post replacements edits with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
     | .ok (replacements', edits') =>
       replacements := replacements'
       edits := edits'
-    edits := edits.push ⟨snap.getSyntax.getPos?.get!.rangeAt, "aaa!", true⟩
-    IO.println s!"----\nedits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
+    IO.println s!"edits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
   -- finally write olean.skimmed. don't bother with error handling yet
   -- TODO standardize edits postprocessing as part of what "edits" are. this should be an extensible part of introducing accumulation
   if edits.any (·.shouldReview) then

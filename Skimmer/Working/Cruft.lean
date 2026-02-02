@@ -140,7 +140,7 @@ protected def runFrontend
     : IO (IO.Promise ImportsSetup × InitialSnapshot) := do
   -- let startTime := (← IO.monoNanosNow).toFloat / 1000000000
   -- let inputCtx := Parser.mkInputContext input fileName
-  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet moduleSetup.options.toOptions true
+  let opts := Lean.internal.cmdlineSnapshots.set moduleSetup.options.toOptions true
   -- default to async elaboration; see also `Elab.async` docs
   let opts := Elab.async.setIfNotSet opts true
   let ctx := { inputCtx with }
@@ -238,13 +238,16 @@ def CommandParsedSnapshot.getSyntax (snap : CommandParsedSnapshot) : Syntax :=
   snap.getInfoTree?.elim .missing (·.getSyntax)
 
 /--
-Gets the command state *after* the command has been elaborated.
-
-Can find the environment *before* elaboration in root context of infotrees.
+Gets the command state *after* the command has been elaborated. However--no infotrees??
 
 What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
 def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.State :=
-  snap.elabSnap.resultSnap.get.cmdState
+  { snap.elabSnap.resultSnap.get.cmdState with infoState := {
+      trees := match snap.getInfoTree? with
+        | some t => PersistentArray.empty.push t
+        | none => {} }
+      -- TODO: holes? do we need to substitutelazy or anything? what about the other infostate things? really confused by this cmdState.
+  }
 
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
 -- TODO: why not `elabSnap.infoTree?`?
