@@ -2,7 +2,7 @@ module
 
 public import Skimmer.Working.Cruft
 public import Skimmer.Refactor.Util.Ident
-import Lake
+public import Lake
 import Lake.Load.Config
 public import Lake.Load.Workspace
 
@@ -113,18 +113,185 @@ deriving instance FromJson for String.Pos.Raw, Syntax.Range, Skimmer.Edit
 
 def _root_.String.Pos.Raw.rangeAt (pos : String.Pos.Raw) : Syntax.Range := ⟨pos, pos⟩
 
+open Skimmer
+
+public structure EditsArtifact where
+  replacements : Option System.FilePath
+  edits : System.FilePath
+  preview : Option System.FilePath
+  mdataPath : System.FilePath
+deriving Inhabited, ToJson, FromJson, BEq, Hashable
+
+def EditsArtifact.readEdits (e : EditsArtifact) : IO (Array Edit) := do
+  .ofExcept <| fromJson? (← IO.FS.readFile e.edits)
+
+def EditsArtifact.writeEdits (edits : Array Edit) (e : EditsArtifact) : IO Unit :=
+  IO.FS.writeFile e.edits (toJson edits).compress
+
+-- TODO: for now we write every replacements to a file, where replacements are cumulative(!).
+-- This is not at all performant, as we likely duplicate lots of data.
+-- We do have to make it past the subprocess boundary, but we can just write *new* replacements to stdout, and return those as a *facet value*, then pass them back in via args.
+-- There is a chance that these replacements get too big. In which case we'd want to use a file anyway. But still, only the
+
+def EditsArtifact.readReplacements (e : EditsArtifact) : IO (NameMap Name) := do
+  let some r := e.replacements | return {}
+  .ofExcept <| fromJson? (← IO.FS.readFile r)
+
+def EditsArtifact.writeReplacements (replacements : NameMap Name) (e : EditsArtifact) :
+    IO Bool := do
+  if replacements.isEmpty then return false else
+    IO.FS.writeFile e.edits (toJson replacements).compress
+    return true
+
+public structure EditMData where
+  -- TODO: include locations
+  numEdits : Nat
+  numReviews : Nat
+deriving ToJson, FromJson, Inhabited, Hashable
+
+def EditsArtifact.readMData (e : EditsArtifact) : IO EditMData := do
+  .ofExcept <| fromJson? (← IO.FS.readFile e.edits)
+
+def EditsArtifact.writeMData (mdata : EditMData) (e : EditsArtifact) : IO Unit :=
+  IO.FS.writeFile e.edits (toJson mdata).compress
+
+def EditsArtifact.readPreview (e : EditsArtifact) : IO (Option String) := do
+ e.preview.mapM IO.FS.readFile
+
+-- TODO: don't write preview for unchanged files
+def EditsArtifact.writePreview (source : String) (edits : Array Edit)
+    (e : EditsArtifact) : IO Bool := do
+  let some preview := e.preview | return false
+  IO.FS.writeFile preview (source.applyEdits edits)
+  return true
+
+def EditsArtifact.writePreviewAndReturn (source : String) (edits : Array Edit)
+    (e : EditsArtifact) : IO (Option String) := do
+  e.preview.mapM fun preview => do
+    let result := source.applyEdits edits
+    IO.FS.writeFile preview result; return result
+
+def EditsArtifact.write (edits : Array Edit) (replacements : NameMap Name) (mdata : EditMData) (source : String)
+    (e : EditsArtifact) : IO Unit := do
+  e.writeEdits edits
+  e.writeMData mdata
+  discard <| e.writeReplacements replacements
+  discard <| e.writePreview source edits
+
+
+
+
+-- Alternate, temporary approach: write everything to one big file so it's an "artifact"
+
+public structure EditsRecord where
+  mdata : EditMData
+  edits : Array Edit
+  replacements : NameMap Name
+  preview : Option String
+deriving Inhabited, ToJson, FromJson
+
+def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit := do
+  Lake.createParentDirs buildFile
+  IO.FS.writeFile buildFile (toJson e).compress
+
+-- TODO: understand this comment in `fetchOleanCore`:
+/-
+      /-
+      Avoid recompiling unchanged OLean files.
+      OLean files transitively include their imports.
+      THowever, imports are pre-resolved by Lake, so they are not included in their trace.
+      -/
+      newTrace s!"{mod.name.toString}:{facet}"
+
+-/
+
+
+-- TODO: it's unfortunate that `buildArtifactUnlessUpToDate` limits us to a single file. We'd like to keep these separate.
+
 -- TODO: (major) We could builk up `Edit` to `DeprecationEdit`, which includes extra data like `review` status. Then refactoring just collapses it down to normal edits. The thing, of course, is that we want *persistent* access to this metadata. And we want ways to handle it.
 -- So we need to *serialize the bulky thing*, and have a way of *registering* this refactor with the overall edit system. This needs to provide (1) any special ways to disply this metadata during the interface (2) an instance of how to transform these into edits. sorting the edits should happena all at once. however, we *do* need meta-handling if there are conflicts. (would it be nice to write down the resolution in the dive file? make merge conflicts first class a la jj?)
 
 -- TODO: make monadic. honestly giving exes access to the lake workspace would be great. or maybe I just want non-lakefile scripts?
 -- instance : Repr Language.Lean.CommandParsedSnapshot where
 --   reprPrec snap _ := s!"{snap.desc}: [{snap.stx}] {snap.elabSnap.elabSnap.get}"
-open Skimmer in
-public def refactor (mod : Lake.Module) : IO Unit := do
+
+-- Is this the right way to do things, or should we be computing the `EditsArtifact`?
+
+#check Lake.buildArtifactUnlessUpToDate
+
+section LakefileSync
+
+-- TODO: unfortunate that we can't Jsonify the module
+public structure Lake.JsonModule where
+  name : Name
+  leanFile : System.FilePath
+deriving Inhabited, ToJson, FromJson
+
+-- Temp: one big file
+public structure RefactorArgs where
+  mod : Lake.JsonModule
+  replacements : Array System.FilePath
+  buildFile : System.FilePath
+  preview : Bool
+deriving Inhabited, ToJson, FromJson
+
+def Lake.Module.skimmerLibPath (mod : Lake.Module) (ext : String) : System.FilePath :=
+  if ext.isEmpty then mod.leanLibPath ext else mod.leanLibPath s!"skimmer.{ext}"
+
+-- don't need to create parent dirs, taken care of at write time
+def mkRefactorArgs (mod : Lake.Module) (replacements : Array System.FilePath)
+    (preview := false) : RefactorArgs :=
+  {
+    mod := { mod with leanFile := mod.leanFile },
+    buildFile := mod.skimmerLibPath "editrecord.json"
+    replacements
+    preview
+  }
+
+-- def RefactorArgs.readReplacements (args : RefactorArgs) : IO (NameMap Name) := do
+--   if args.replacements.isEmpty then return {} else
+--     let mut r : NameMap Name := {}
+--     for file in args.replacements do
+--       let more : NameMap Name ← .ofExcept <| fromJson? <|← IO.FS.readFile file
+--       r := r.union more
+--     return r
+
+end LakefileSync
+
+-- currently assumes we get all we need from the direct imports
+def RefactorArgs.readReplacements (args : RefactorArgs) : IO (NameMap Name) := do
+  if args.replacements.isEmpty then return {} else
+    let mut r : NameMap Name := {}
+    for file in args.replacements do
+      let more : NameMap Name ← .ofExcept <| fromJson? <|← IO.FS.readFile file
+      r := r.union more
+    return r
+
+
+def Lake.creatingParentDirs (path : System.FilePath) : IO System.FilePath :=
+  do Lake.createParentDirs path; return path
+
+def mkEditsArtifact (mod : Lake.Module) (preview := true) : IO EditsArtifact := do
+  let replacements ← Lake.creatingParentDirs <| mod.skimmerLibPath "replacements.json"
+  let edits ← Lake.creatingParentDirs <| mod.skimmerLibPath "edits.json"
+  let preview ← if preview then
+    some <$> (Lake.creatingParentDirs <| mod.skimmerLibPath "preview.json") else pure none
+  let mdataPath ← Lake.creatingParentDirs <| mod.skimmerLibPath "editMData.json"
+  return {
+    replacements,
+    edits,
+    preview,
+    mdataPath
+  }
+
+
+-- (What not to do) what if we returned the metadata and sent it back along stdout? Then made it a facet value?
+-- I suppose the issue is that it is no longer an artifact we can read. We have to run the lake facet to get it.
+public def refactor (args : RefactorArgs) : IO Unit := do
   initSearchPath (← findSysroot)
-  let source ← IO.FS.readFile mod.leanFile
-  let inputCtx := Parser.mkInputContext source mod.name.toString -- TODO check if correct
-  let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := mod.name }
+  let source ← IO.FS.readFile args.mod.leanFile
+  let inputCtx := Parser.mkInputContext source args.mod.name.toString -- TODO check if correct
+  let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := args.mod.name }
   -- IO.println setup.result!.get.imports
   let some { headerParserState, headerState, commands } := snap.toCommandSnaps
     | IO.eprintln "Could not find snaps."
@@ -133,7 +300,7 @@ public def refactor (mod : Lake.Module) : IO Unit := do
   -- spawn a `lake exe working` on them if they don't exist (lake will do this in the future)
   -- read into `replacements`.
   -- IO.println s!"{repr r.stx.raw.getRangeWithTrailing?}; {headerParserState.pos}"
-  let mut replacements : NameMap Name := {}
+  let mut replacements : NameMap Name ← args.readReplacements
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
     -- TODO: none of these capture the error where the date and identifier are flipped. What does?
@@ -157,14 +324,29 @@ public def refactor (mod : Lake.Module) : IO Unit := do
     edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Working.Review\n\n", none⟩
   -- IO.println (edits.map (repr ·.range))
   edits := edits.qsortOrd
+  let mdata : EditMData := {
+    numEdits := edits.size
+    numReviews := edits.countP (·.shouldReview?.isSome) }
   -- IO.println s!"====\nedits: {← (toMessageData edits).toString}"
   -- -- IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
-  IO.println s!"====\n{source.applyEdits edits}"
+
+  -- IO.println s!"====\n{source.applyEdits edits}"
+
   -- replaceDeprecated (r : NameMap Name) (e : Array String) :=
   --   return (r, e.push s!"another! (foo exists: {(← getEnv).find? `foo |>.isSome})")
   -- TODO: store replacements in build file for extra things
   -- IO.FS. mod.jsonSkimmerFile
-  IO.FS.writeFile mod.jsonSkimmerFile (toJson edits).compress
+
+  -- discard <| art.write edits replacements mdata source
+
+  let editsRecord : EditsRecord := {
+    mdata,
+    edits,
+    replacements,
+    preview := if args.preview then some (source.applyEdits edits) else none
+  }
+  editsRecord.write args.buildFile
+
 /-
 Rewrite write-edits:
 
@@ -189,43 +371,24 @@ ToJson, FromJson, and after FromJson, write as usual using paths.
 -- def getTopologicallySortedModulesAux (ws : Lake.Workspace) (mod : Lake.Module) (acc : Array Lake.Module) : Lake.Module :=
 --   let
 
-open Lake System in
-/- temporary before moving to Lake, written by Codex -/
-public def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
-  let (elan?, lean?, lake?) ← findInstall?
-  let some lean := lean? | throw <| IO.userError "Lean install not found"
-  let some lake := lake? | throw <| IO.userError "Lake install not found"
-  let env ← (Env.compute lake lean elan? none).toIO .userError
-  let cfg : LoadConfig := {
-    lakeEnv := env
-    wsDir := root
-    relPkgDir := "."
-    relConfigFile := "lakefile.lean"
-  }
-  let some ws ← (Lake.loadWorkspace cfg).toBaseIO | throw <| IO.userError "workspace load failed"
-  return ws
+-- open Lake System in
+-- /- temporary before moving to Lake, written by Codex -/
+-- public def IO.loadWorkspace (root : FilePath := ".") : IO Workspace := do
+--   let (elan?, lean?, lake?) ← findInstall?
+--   let some lean := lean? | throw <| IO.userError "Lean install not found"
+--   let some lake := lake? | throw <| IO.userError "Lake install not found"
+--   let env ← (Env.compute lake lean elan? none).toIO .userError
+--   let cfg : LoadConfig := {
+--     lakeEnv := env
+--     wsDir := root
+--     relPkgDir := "."
+--     relConfigFile := "lakefile.lean"
+--   }
+--   let some ws ← (Lake.loadWorkspace cfg).toBaseIO | throw <| IO.userError "workspace load failed"
+--   return ws
 
--- currently we'll only support globs and no imports/file dependencies. because we want to use lake eventually anyway. fine.
-public def main (args : List String): IO Unit := do
-  let ws ← IO.loadWorkspace
+-- currently we expect the module to be fed in via `mod`, and the `EditsArtifact` to be fed in
+public def main (args : List String) : IO Unit := do
   match args with
-  | ["--one", src] =>
-    let filePath := System.FilePath.mk (src.drop 1 |>.dropEnd 1).toString
-    let some mod := ws.findModuleBySrc? filePath
-      | throw (.userError "Couldn't find module!")
-    refactor mod
-  | args =>
-    let pkg := ws.root
-    for lib in pkg.leanLibs do
-      -- DANGER. library must be built first so that writeFile succeeds...
-      if args.isEmpty || args.contains lib.name.toString then
-        IO.println (← lib.getModuleArray)
-        for mod in ← lib.getModuleArray do
-          IO.println s!"  {mod.jsonSkimmerFile}"
-          let e ← IO.Process.spawn {
-            cmd := "lake"
-            args := #["exe", exeName, "--one", s!"'{mod.leanFile.toString}'"]
-          }
-          let exit ← e.wait
-          unless exit = 0 do
-            IO.Process.exit exit.toUInt8 -- what if it overflows to 0?
+  | [refactorArgs] => do refactor (← .ofExcept <| fromJson? refactorArgs)
+  | _ => throw (.userError "Expected json for refactor args")
