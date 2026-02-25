@@ -24,13 +24,16 @@ Possibly, we want to construct this at the end instead of `qsort`ing to avoid ti
 
 /- TODO: Edit subsets, and the ability to "imagine" how to shift edits after applying one subset. -/
 
+deriving instance ToJson for String.Pos.Raw, Syntax.Range
+deriving instance FromJson for String.Pos.Raw, Syntax.Range
+
 structure Skimmer.Edit where
   range : Syntax.Range
   replacement : String
   /-- Holds an old version of the replacement that ought to be reviewed. -/
   shouldReview? : Option String := none -- Note: may be updated relative to the actual old source, if we do not need to review all of the edit.
   -- TODO: review functionality should be prior to the "raw" edits probably. Further, we need different review no-ops for different syntax categories, and possibly ways to expand to syntax which can be no-op'd. Would be good to have a monad that allowed this, and also allowed getting infotrees cheaply...
-deriving Inhabited, BEq, Repr
+deriving Inhabited, BEq, Repr, Hashable, ToJson, FromJson
 
 open Skimmer
 
@@ -46,19 +49,27 @@ def Skimmer.Edit.cmp (e₁ e₂ : Edit) : Ordering :=
 
 instance : Ord Edit where compare := Edit.cmp
 
-/-- The extension holding all edits produced by any refactor. -/
--- TODO: we might also want to hold failures/errors/"uncertain edits" which need approval here.
-initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
-  registerPersistentEnvExtension {
-    mkInitial := pure #[]
-    addImportedFn := fun _ => pure #[]
-    addEntryFn := Array.append
-    statsFn edits := f!"{edits.size} edits"
-    exportEntriesFnEx _ edits _ := edits.qsortOrd
-  }
-
 instance : ToMessageData Syntax.Range where
   toMessageData range := m!"({range.start}:{range.stop})"
+
+instance : ToMessageData Edit where
+  toMessageData e :=
+    if let some old := e.shouldReview? then
+      m!"[?](\"{old}\"@{e.range} ↦ \"{e.replacement}\")"
+    else
+      m!"({e.range} ↦ \"{e.replacement}\")"
+
+/- TODO: currently we're taking a purely external appraoch. We'll want to reinstate this (or something like it) to give downstream users the chance to record edits from within their own metaprograms. -/
+-- /-- The extension holding all edits produced by any refactor. -/
+-- -- TODO: we might also want to hold failures/errors/"uncertain edits" which need approval here.
+-- initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
+--   registerPersistentEnvExtension {
+--     mkInitial := pure #[]
+--     addImportedFn := fun _ => pure #[]
+--     addEntryFn := Array.append
+--     statsFn edits := f!"{edits.size} edits"
+--     exportEntriesFnEx _ edits _ := edits.qsortOrd
+--   }
 
 /-- Assumes `edits` is sorted, and the ranges are disjoint. -/
 def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
@@ -153,6 +164,3 @@ def String.bracketRanges (text : String) (ranges : Array Syntax.Range) : String 
       prevEndPos := slice.endExclusive
   out := out ++ text.sliceFrom prevEndPos
   return out
-
-instance : ToMessageData Edit where
-  toMessageData e := m!"({e.range} ↦ \"{e.replacement}\")"
