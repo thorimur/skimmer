@@ -84,6 +84,88 @@ module_facet setupWithTrans (mod) : ModuleSetup := do
 
 abbrev Lake.Module.setupWithTrans (mod : Lake.Module) := mod.facet `setupWithTrans
 
+namespace Inline
+
+open Lean Parser Elab Term Command
+
+/-- `replaceAllSourceInfo ref cmd` replaces all source info in `cmd` with that of `ref`, if it
+exists (or leaves `cmd` alone). -/
+partial def replaceAllSourceInfo (ref cmd : Syntax) : Syntax :=
+  if let some info := ref.getInfo? then
+    cmd.setInfo info |>.modifyArgs (·.map <| replaceAllSourceInfo ref)
+  else cmd
+
+
+partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
+    (s : ModuleParserState) (log : MessageLog) (ref : Syntax) (mod : Name) : CommandElabM Unit := do
+  let (cmd, s, log) := parseCommand ictx ctx s log
+  if log.hasErrors then
+    modify fun s => { s with messages := s.messages ++ log } -- TODO: check that this is right
+    throwError "[{mod}] Failed to parse command:\
+      {indentD (cmd.unsetTrailing.reprint.getD <| toString cmd)}"
+  if isTerminalCommand cmd then return
+  elabCommand (replaceAllSourceInfo ref cmd) -- not `*TopLevel`, don't need linters etc.
+  modify fun s => { s with infoState := {} } -- don't reset messages
+  if ← MonadLog.hasErrors then
+    throwError "[{mod}] Failed to elaborate command:\
+      {indentD (cmd.unsetTrailing.reprint.getD <| toString cmd)}" -- TODO: not firing
+  -- TODO: get `log`?
+  let ctx : ParserModuleContext := {
+      env := ← getEnv
+      options := ← getOptions
+      openDecls := ← getOpenDecls
+      currNamespace := ← getCurrNamespace }
+  parseAndElabAux ictx ctx s log ref mod
+
+partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) :
+    CommandElabM NameSet := if processedModules.contains mod then return processedModules else do
+  let file := modToFilePath "." mod "lean"
+  unless ← file.pathExists do
+    -- TODO: could also look in lake packages
+    throwError "Could not locate file {file}"
+  let src ← IO.FS.readFile file -- TODO: command-click on `mod`
+  let ictx := mkInputContext src file.toString
+  let (header, s, log) ← parseHeader ictx
+  if log.hasErrors then
+    modify fun s => { s with messages := s.messages ++ log }
+    throwError "Failed to parse header."
+  let `(Module.header| $[module%$modTk?]? $[prelude]? $imports*) := header
+    | throwUnsupportedSyntax
+  let mut processedModules := processedModules.insert mod
+  for imp in imports do
+    let `(Module.import| $[public%$pubTk?]? $[meta%$metaTk?]? import $[all%$allTk?]? $mod) := imp
+      | throwUnsupportedSyntax
+    let mod := mod.getId
+    match mod.getRoot with
+    | `Lean | `Std | `Lake => continue
+    | _ =>
+      if processedModules.contains mod then continue
+      processedModules ← elabModule ref mod processedModules
+  -- TODO: reset the rest of the Command.State except for important things, consider changing mainModule, context, etc.
+  -- TODO: refactor?
+  let scopes ← getScopes
+  modify fun s => { s with scopes := [{ header := "", opts := {} }] }
+  let ctx : ParserModuleContext := { env := ← getEnv, options := {} }
+  let infoState ← getInfoState
+  parseAndElabAux ictx ctx s log ref mod
+  modify fun s => { s with infoState, scopes }
+  return processedModules
+
+-- TODO: consider just actually having the command inline the source code (sans imports) instead of elaborating like this? And update when it doesn't match?
+-- TODO: go-to-"real"-def on constants
+-- TODO: follow imports?
+
+/-- Inlines the module into the lakefile. Also inlines transitive imports (except for core imports, which are already available); includes all private scopes. Resets namespaces before and after. -/
+elab "inline_modules " mods:Parser.ident+ : command => do
+  let mut processedModules := {}
+  for mod in mods do
+    processedModules ← withRef mod do
+      elabModule mod mod.getId processedModules
+
+end Inline
+
+inline_modules Skimmer.Refactor.Lake
+
 -- TODO: we may want instead to stick to general `FetchM` functions.
 
 /-- This fetches `facetName` for every import satisfying `filter`, then runs `shadow` on the result, passing in the modules satisfying filter and the setup.
@@ -132,43 +214,12 @@ def Lake.Module.inRootPackage.{u} {m : Type → Type u} [Monad m] [MonadWorkspac
 -- TODO(NOW): also read/write from these filepaths? use buildartifact unless up to date?
 -- TODO(NOW): where does `buildArtifactUnlessUpToDate` come in?
 
--- TODO: unfortunate that we can't Jsonify the module
-section LakefileSync
-
--- TODO: unfortunate that we can't Jsonify the module
-public structure Lake.JsonModule where
-  name : Name
-  leanFile : System.FilePath
-deriving Inhabited, ToJson, FromJson
-
--- Temp: one big file
-public structure RefactorArgs where
-  mod : Lake.JsonModule
-  replacements : Array System.FilePath
-  buildFile : System.FilePath
-  preview : Bool
-deriving Inhabited, ToJson, FromJson
-
-def Lake.Module.skimmerLibPath (mod : Lake.Module) (ext : String) : System.FilePath :=
-  if ext.isEmpty then mod.leanLibPath ext else mod.leanLibPath s!"skimmer.{ext}"
-
--- don't need to create parent dirs, taken care of at write time
-def mkRefactorArgs (mod : Lake.Module) (replacements : Array System.FilePath)
-    (preview := false) : RefactorArgs :=
-  {
-    mod := { mod with leanFile := mod.leanFile },
-    buildFile := mod.skimmerLibPath "editrecord.json"
-    replacements
-    preview
-  }
-
-end LakefileSync
-
 -- TODO: would be much better if we could buildArtifactsUnlessUpToDate.
-module_facet refactor (mod) : System.FilePath := do
-  recFetchFacetShadowingBuildWhere mod `refactor (filter := some fun i => return i.pkg == mod.pkg)
+module_facet recordRefactors (mod) : System.FilePath := do
+  recFetchFacetShadowingBuildWhere mod `recordRefactors
+    (filter := some fun i => return i.pkg == mod.pkg)
     fun _ _ replacementPaths => do
-      let args := mkRefactorArgs mod replacementPaths
+      let args := mod.mkRefactorArgs replacementPaths
       discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
         discard <| captureProc { -- todo: check using correct proc
           cmd := "lake"
