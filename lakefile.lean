@@ -227,12 +227,58 @@ module_facet recordRefactors (mod) : System.FilePath := do
         }
       return Job.pure args.buildFile
 
--- library_facet refactor (lib) : System.FilePath := do
---   (← lib.modules.fetch).bindM fun mods => do
---     let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `refactor
---     -- TODO: read the mdata from the files, then aggregate into a single file.
---     -- A bit difficult, since it requires duplicating the Lean definitions in the lakefile.
---     -- Could also drive this in an exe to accommodate other collections of modules. Or have new targets that represent these, where the modules given are arguments/env variables
+open Skimmer
+
+/-- For now, this is just the list of buildfile paths. -/
+structure GlobalEditMData where
+  buildFiles : Array System.FilePath
+deriving ToJson, FromJson, Inhabited
+
+def Lake.LeanLib.skimmerDir (lib : LeanLib) : System.FilePath :=
+  lib.pkg.buildDir / "skimmer"
+
+-- TODO: pattern more closely off of `filePath`
+def Lake.LeanLib.skimmerGlobalEditMDataFile (lib : LeanLib) : System.FilePath :=
+  lib.skimmerDir / "globalEditMData.json"
+
+library_facet recordRefactors (lib) : System.FilePath := do
+  (← lib.modules.fetch).bindM fun mods => do
+    let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
+    mods.mapM fun buildFiles => do
+      let file := lib.skimmerGlobalEditMDataFile
+      discard <| buildArtifactUnlessUpToDate file do
+        Lake.createParentDirs file
+        IO.FS.writeFile file (toJson { buildFiles : GlobalEditMData }).compress
+      return file
+
+-- TODO: record the trace or hash in the recorded edits. Invalidate if it doesn't match the lean file hash.
+-- TODO: better return value. Right now it returns the filepath. We may call out into something more interactive here.
+module_facet applyRefactors (mod) : Unit := do
+  -- TODO(NOW): we SHOULD NOT do this. We should essentially always be running under `--no-build` but for recording refactors.
+  -- Is `checkNoBuild` automatic? Do I need to handle `noBuild` config in `recordRefactors`?
+  let art ← fetch <| mod.facet `recordRefactors
+  art.mapM fun recordPath => do
+    let edits ← EditsRecord.readEdits recordPath
+    let src ← IO.FS.readFile mod.leanFile
+    IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+
+library_facet applyRefactors (lib) : Unit := do
+  (← lib.modules.fetch).mapM fun mods => do
+    let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
+    discard <| mods.await -- hmmm, is this correct?
+
+    -- fun _ _ replacementPaths => do
+    --   let args := mod.mkRefactorArgs replacementPaths
+    --   discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+    --     discard <| captureProc { -- todo: check using correct proc
+    --       cmd := "lake"
+    --       args := #["exe", "working", (toJson args).compress]
+    --     }
+    --   return Job.pure args.buildFile
+
+    -- TODO: read the mdata from the files, then aggregate into a single file.
+    -- A bit difficult, since it requires duplicating the Lean definitions in the lakefile.
+    -- Could also drive this in an exe to accommodate other collections of modules. Or have new targets that represent these, where the modules given are arguments/env variables
 
 
 -- module_facet pickleJar (mod : Module) : Unit := do

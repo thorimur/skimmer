@@ -36,6 +36,12 @@ def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit 
   Lake.createParentDirs buildFile
   IO.FS.writeFile buildFile (toJson e).compress
 
+def _root_.System.FilePath.readJson (α) [FromJson α] (path : System.FilePath) : IO α := do
+  .ofExcept <| fromJson? (← IO.FS.readFile path)
+
+def EditsRecord.readEdits (path : System.FilePath) : IO (Array Edit) :=
+  (·.edits) <$> path.readJson EditsRecord
+
 -- TODO: This is a workaround to let us jsonify what we need from `Lake.Module`s. Is there a better way...? Kind of surprised `Lake.Module`s don't jsonify.
 public structure Lake.JsonModule where
   name : Name
