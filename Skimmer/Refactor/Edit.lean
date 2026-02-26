@@ -8,7 +8,7 @@ module
 public import Lean
 public import Skimmer.Refactor.String
 
-@[expose] public section
+public section
 
 open Lean
 
