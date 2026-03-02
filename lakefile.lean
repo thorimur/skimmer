@@ -122,7 +122,7 @@ partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) 
   unless ← file.pathExists do
     -- TODO: not all packages use the default location for dependencies, necessarily.
     -- the principled thing is to get this from the root somehow
-    file := modToFilePath ((← IO.currentDir) / ".lake" / ".packages" / "skimmer") mod "lean"
+    file := modToFilePath ("." / ".lake" / "packages" / "skimmer") mod "lean"
     unless ← file.pathExists do
     -- TODO: could also look in lake packages
       throwError "Could not locate file {file}.\ncurrent directory: {← IO.currentDir}"
