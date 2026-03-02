@@ -8,6 +8,36 @@ open Lean
 
 public section
 
+def Lake.Package.skimmerDir (pkg : Package) : System.FilePath :=
+  pkg.buildDir / "skimmer"
+
+def Lake.Package.skimmerFilePath (pkg : Package) (path : System.FilePath) (ext : String) :
+    System.FilePath :=
+  pkg.skimmerDir / path |>.addExtension ext
+
+def Lake.LeanLib.skimmerDir (lib : LeanLib) : System.FilePath :=
+  lib.pkg.skimmerDir / "lib_dir" / lib.name.toString
+
+def Lake.LeanLib.skimmerFilePath (lib : LeanLib) (path : System.FilePath) (ext : String)
+    : System.FilePath :=
+  lib.skimmerDir / path |>.addExtension ext
+
+namespace Lake.Module
+
+open Skimmer
+
+def skimmerDir (mod : Lake.Module) : System.FilePath :=
+  mod.filePath mod.pkg.skimmerDir "" -- is directory-like
+
+def skimmerFilePath (mod : Lake.Module) (path : System.FilePath) (ext : String) :
+    System.FilePath :=
+  mod.skimmerDir / path |>.addExtension ext
+
+def skimmerEditsRecord (mod : Lake.Module) : System.FilePath :=
+  mod.skimmerFilePath "editsrecord" "json"
+
+end Lake.Module
+
 namespace Skimmer
 
 -- Temporary approach: write everything to one big file so it's an "artifact"
@@ -16,7 +46,20 @@ structure EditMData where
   -- TODO: include locations
   numEdits : Nat
   numReviews : Nat
+  /-- Used temporarily for global "aggregation". Probably won't be permanent. We assume this is not used recursively. -/
+  moreFiles : Array System.FilePath := #[]
+  modules : Array Name
 deriving ToJson, FromJson, Inhabited, Hashable
+
+instance : EmptyCollection EditMData := ⟨⟨0,0,#[],#[]⟩⟩
+
+instance : Append EditMData where
+  append m₀ m₁ := {
+    numEdits := m₀.numEdits + m₁.numEdits
+    numReviews := m₀.numReviews + m₁.numReviews
+    moreFiles := m₀.moreFiles ++ m₁.moreFiles
+    modules := m₀.modules ++ m₁.modules
+  }
 
 /-- Written to Json to record edits. If present, `preview` contains the file with edits applied.
 TODO: `NameMap` could get bulky, and in standard operation we'd write it many times, even when not changing it. This should be improved.
@@ -32,15 +75,47 @@ structure EditsRecord where
   preview : Option String
 deriving ToJson, FromJson, Inhabited
 
+def mkDummyEditsRecord (moreFiles : Array System.FilePath) (mods : Array Lake.Module) : EditsRecord where
+  mdata := {
+    numEdits := 0
+    numReviews := 0
+    moreFiles
+    modules := mods.map (·.name)
+  }
+  edits := #[]
+  replacements := {}
+  preview := none
+
 def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit := do
   Lake.createParentDirs buildFile
   IO.FS.writeFile buildFile (toJson e).compress
 
+variable (s : String)
+
+@[inline] def _root_.String.toJson {α : Type} [FromJson α] (s : String) : Except String α := do
+  fromJson? <|← Json.parse s
+
 def _root_.System.FilePath.readJson (α) [FromJson α] (path : System.FilePath) : IO α := do
-  .ofExcept <| fromJson? (← IO.FS.readFile path)
+  .ofExcept <| (← IO.FS.readFile path).toJson
 
 def EditsRecord.readEdits (path : System.FilePath) : IO (Array Edit) :=
   (·.edits) <$> path.readJson EditsRecord
+
+-- TODO: this will become more informative
+def EditMData.read (path : System.FilePath) : IO EditMData := do
+  let { mdata .. } ← path.readJson EditsRecord
+  if mdata.moreFiles.isEmpty then
+    return mdata
+  else
+    let mut result : EditMData := {}
+    for path in mdata.moreFiles do
+      let { mdata .. } ← path.readJson EditsRecord
+      result := result ++ mdata
+    return result
+
+/-- Written by an `applyRefactor` facet/action. -/
+structure EditsWrittenRecord where
+  newLeanFileHash : Option Lake.Hash
 
 -- TODO: This is a workaround to let us jsonify what we need from `Lake.Module`s. Is there a better way...? Kind of surprised `Lake.Module`s don't jsonify.
 public structure Lake.JsonModule where
@@ -77,14 +152,11 @@ namespace Lake.Module
 
 open Skimmer
 
-def skimmerLibPath (mod : Lake.Module) (ext : String) : System.FilePath :=
-  if ext.isEmpty then mod.leanLibPath ext else mod.leanLibPath s!"skimmer.{ext}"
-
 -- don't need to create parent dirs, taken care of at write time
 def mkRefactorArgs (mod : Lake.Module) (replacements : Array System.FilePath) (preview := false) :
     RefactorArgs where
   mod := { name := mod.name, leanFile := mod.leanFile }
-  buildFile := mod.skimmerLibPath "editrecord.json"
+  buildFile := mod.skimmerEditsRecord
   replacements
   preview
 
