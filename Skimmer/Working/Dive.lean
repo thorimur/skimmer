@@ -136,7 +136,7 @@ syntax (name := refactorSpecStx) "refactor " "deprecated " Lake.buildSpec+ : com
 
 def toPartialBuildKey (stx : TSyntax ``Lake.buildSpec) : Except String Lake.PartialBuildKey := do
   let some x := stx.raw.reprint | .error s!"Could not reprint syntax:{stx}"
-  Lake.PartialBuildKey.parse x
+  Lake.PartialBuildKey.parse x.trimAscii.copy
 
 def _root_.Lake.PartialBuildKey.toHumanReadableString
     (key : Lake.PartialBuildKey) (capital := false) : String :=
