@@ -116,8 +116,6 @@ partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
       currNamespace := ← getCurrNamespace }
   parseAndElabAux ictx ctx s log ref mod
 
-#check IO.currentDir
-
 partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) :
     CommandElabM NameSet := if processedModules.contains mod then return processedModules else do
   let mut file := modToFilePath "." mod "lean"
