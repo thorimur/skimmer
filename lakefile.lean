@@ -95,7 +95,6 @@ partial def replaceAllSourceInfo (ref cmd : Syntax) : Syntax :=
     cmd.setInfo info |>.modifyArgs (·.map <| replaceAllSourceInfo ref)
   else cmd
 
-
 partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
     (s : ModuleParserState) (log : MessageLog) (ref : Syntax) (mod : Name) : CommandElabM Unit := do
   let (cmd, s, log) := parseCommand ictx ctx s log
@@ -106,6 +105,7 @@ partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
   if isTerminalCommand cmd then return
   elabCommand (replaceAllSourceInfo ref cmd) -- not `*TopLevel`, don't need linters etc.
   modify fun s => { s with infoState := {} } -- don't reset messages
+  -- TODO: wait for messages?
   if ← MonadLog.hasErrors then
     throwError "[{mod}] Failed to elaborate command:\
       {indentD (cmd.unsetTrailing.reprint.getD <| toString cmd)}" -- TODO: not firing
@@ -151,10 +151,8 @@ partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) 
   modify fun s => { s with infoState, scopes }
   return processedModules
 
--- TODO: consider just actually having the command inline the source code (sans imports) instead of elaborating like this? And update when it doesn't match?
--- TODO: go-to-"real"-def on constants
--- TODO: follow imports?
-
+-- TODO: command-click for modules listed
+-- TODO: go-to-"real"-def on constants, somehow
 /-- Inlines the module into the lakefile. Also inlines transitive imports (except for core imports, which are already available); includes all private scopes. Resets namespaces before and after. -/
 elab "inline_modules " mods:Parser.ident+ : command => do
   let mut processedModules := {}
