@@ -1,3 +1,8 @@
+/-
+Copyright (c) 2026 Thomas R. Murrills. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Thomas R. Murrills
+-/
 module
 
 public import Skimmer.Working.Cruft
@@ -141,7 +146,9 @@ public def refactor (args : RefactorArgs) : IO Unit := do
   edits := edits.qsortOrd
   let mdata : EditMData := {
     numEdits := edits.size
-    numReviews := edits.countP (·.shouldReview?.isSome) }
+    numReviews := edits.countP (·.shouldReview?.isSome)
+    modules := #[args.mod.name]
+    }
   -- IO.println s!"====\nedits: {← (toMessageData edits).toString}"
   -- -- IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
 
@@ -181,7 +188,6 @@ ToJson, FromJson, and after FromJson, write as usual using paths.
 
 
 -/
-
 -- currently we expect the module to be fed a single `RefactorArgs`
 public def main (args : List String) : IO Unit := do
   match args with
