@@ -242,13 +242,14 @@ module_facet recordRefactors (mod) : System.FilePath := do
   recFetchFacetShadowingBuildWhere mod `recordRefactors
     (filter := some fun i => return i.pkg == mod.pkg)
     fun _ _ replacementPaths => do
-      let args := mod.mkRefactorArgs replacementPaths
-      discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-        discard <| captureProc { -- todo: check using correct proc
-          cmd := "lake"
-          args := #["exe", "working", (toJson args).compress]
-        }
-      return Job.pure args.buildFile -- TODO: correct?
+      (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
+        let args := mod.mkRefactorArgs replacementPaths
+        discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+          discard <| captureProc { -- todo: check using correct proc
+            cmd := "lake"
+            args := #["exe", "working", (toJson args).compress]
+          }
+        return args.buildFile -- TODO: correct?
 
 open Skimmer
 
