@@ -57,7 +57,7 @@ def query (target : PartialBuildKey) (α : Type) [FromJson α] (input? : Option 
     cmd := "lake"
     args := #["query", "--json", target.toString]
   }
-  .ofExcept (← .ofOutput output).toJson
+  .ofExcept (← .ofOutput output).readJson?
 
 def runScript (script : String) (args : Array String := #[]) : IO String := do
   let output ← IO.Process.output {
