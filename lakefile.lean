@@ -299,10 +299,22 @@ module_facet applyRefactors (mod) : System.FilePath := do
       IO.FS.writeFile mod.leanFile <| src.applyEdits edits
     return recordPath
 
-library_facet applyRefactors (lib) : Unit := do
-  (← lib.modules.fetch).mapM fun mods => do
-    let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
-    discard <| mods.await -- hmmm, is this correct?
+library_facet applyRefactors (lib) : Array System.FilePath := do
+  (← lib.modules.fetch).bindM fun mods => do
+    return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
+
+package_facet applyRefactors (pkg) : Array System.FilePath := do
+  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+  aamods.bindM fun aamods => do
+    -- TODO: abstract out into package_facet modules
+    let mut modset : ModuleSet := {}
+    let mut mods := #[]
+    for amods in aamods do
+      for mod in amods do
+        unless modset.contains mod do
+          mods := mods.push mod
+          modset := modset.insert mod
+    return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
 
 -- module_facet pickleJar (mod : Module) : Unit := do
 --   recFetchShadowingBuildWhere mod `pickleJar (filter := some (·.inRootPackage)) fun _ mods _ => do
