@@ -191,5 +191,5 @@ ToJson, FromJson, and after FromJson, write as usual using paths.
 -- currently we expect the module to be fed a single `RefactorArgs`
 public def main (args : List String) : IO Unit := do
   match args with
-  | [refactorArgs] => do refactor (← .ofExcept <| fromJson? refactorArgs)
+  | [refactorArgs] => do refactor (← .ofExcept refactorArgs.readJson?)
   | _ => throw (.userError "Expected json for refactor args")

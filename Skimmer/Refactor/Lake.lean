@@ -92,11 +92,11 @@ def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit 
 
 variable (s : String)
 
-@[inline] def _root_.String.toJson {α : Type} [FromJson α] (s : String) : Except String α := do
+@[inline] def _root_.String.readJson? {α : Type} [FromJson α] (s : String) : Except String α := do
   fromJson? <|← Json.parse s
 
 def _root_.System.FilePath.readJson (α) [FromJson α] (path : System.FilePath) : IO α := do
-  .ofExcept <| (← IO.FS.readFile path).toJson
+  .ofExcept <| (← IO.FS.readFile path).readJson?
 
 def EditsRecord.readEdits (path : System.FilePath) : IO (Array Edit) :=
   (·.edits) <$> path.readJson EditsRecord
@@ -142,7 +142,7 @@ def RefactorArgs.readReplacements (args : RefactorArgs) : IO (NameMap Name) := d
   if args.replacements.isEmpty then return {} else
     let mut r : NameMap Name := {}
     for file in args.replacements do
-      let more : NameMap Name ← .ofExcept <| fromJson? <|← IO.FS.readFile file
+      let more ← file.readJson (NameMap Name)
       r := r.union more
     return r
 
