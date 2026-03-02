@@ -1,8 +1,11 @@
-
+/-
+Copyright (c) 2026 Thomas R. Murrills. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Thomas R. Murrills
+-/
 import Lean
 import Skimmer.Working.Main
-import Skimmer.Working.Get
-import Std
+import Skimmer.Working.LakeIO
 import Batteries
 
 open Lean
@@ -120,64 +123,92 @@ unsafe def runAndOpenPickleJar (α) [TypeName α]
 
 namespace Skimmer
 
-initialize refactorLibRef : IO.Ref NameSet ← IO.mkRef {}
+open Skimmer
 
-syntax (name := refactorSpecStx) "refactor " "deprecated " ident : command
+syntax Lake.tgtSpec := ("+" noWs)? ident (noWs ":" noWs ident)?
+syntax Lake.pkgSpec := ("@" noWs)? ident (noWs "/" noWs (Lake.tgtSpec)?)?
+syntax Lake.buildSpec := Lake.tgtSpec <|> Lake.pkgSpec
+
+syntax (name := refactorSpecStx) "refactor " "deprecated " Lake.buildSpec+ : command
+
+def toPartialBuildKey (stx : TSyntax ``Lake.buildSpec) : Except String Lake.PartialBuildKey := do
+  let some x := stx.raw.reprint | .error s!"Could not reprint syntax:{stx}"
+  Lake.PartialBuildKey.parse x
+
+def _root_.Lake.PartialBuildKey.toHumanReadableString
+    (key : Lake.PartialBuildKey) (capital := false) : String :=
+  let t := if capital then "T" else "t"
+  match key with
+  | .module mod => s!"{t}he module {mod}"
+  | .packageModule pkg mod => s!"{t}he module {mod}{
+    if pkg.isAnonymous then "" else s!" in package {pkg}"}"
+  | .packageFacet pkg facet => s!"{t}he facet {facet}{
+    if pkg.isAnonymous then "" else s!" in package {pkg}"}"
+  | .facet tgt facet => s!"{toHumanReadableString tgt capital}, facet {facet}"
+  | .packageTarget pkg tgt => s!"{t}he target {tgt}{
+    if pkg.isAnonymous then "" else s!" in package {pkg}"}"
+  | .package pkg => if pkg.isAnonymous then s!"{t}he current package" else s!"{t}he package {pkg}"
+
+deriving instance BEq, Hashable for Lake.PartialBuildKey
+
+-- TODO: just for demo purposes. env extension is the right way
+initialize refactorTgtRef : IO.Ref (Syntax × Array Lake.PartialBuildKey) ←
+  IO.mkRef (.missing, {})
 
 elab_rules : command
-| `(refactor deprecated $i:ident) => refactorLibRef.modify (·.insert i.getId)
+| `(refactor deprecated $stx:Lake.buildSpec*) => do
+  let buildKeys ← stx.mapM (ofExcept <| toPartialBuildKey ·)
+  refactorTgtRef.set (← getRef, buildKeys)
 
 -- TODO: make these actions extensible by subtools, and automatically integrate them with interactive choices for the next ones. nested `?` isn't ideal. Could just use an array then check for wellformedness during elaboration
 syntax (name := diveStx) "dive " ("prepare " ("execute")?)? : command
 
+def _root_.String.andList (xs : List String) : String :=
+  match xs with
+  | [] => "– none –"
+  | [x] => x
+  | [x₀, x₁] => x₀ ++ " and " ++ x₁
+  | _ => ", ".intercalate xs.dropLast ++ ", and " ++ xs.getLast!
+
 open Lean Elab Command Meta Tactic.TryThis
 elab_rules : command
 | `(diveStx|dive%$tk) => do
-  -- let ws ← IO.loadWorkspace
-  -- for lib in ws.root.leanLibs do
-  --   if (← refactorLibRef.get).contains lib.name then
-  --     let mods ← lib.getModuleArray
-  -- TEMP: IO.loadWorkspace crashes the server.
-  let lib := `WorkingTest
-  let mods := #[`WorkingTest.Test, `WorkingTest.ReviewTest]
 
+  let (ref, keys) ← refactorTgtRef.get
+  if ref.isMissing then throwError "No action registered yet."
+  IO.Lake.checkTarget keys
 
   liftCoreM <| do
-    addSuggestion tk (header := s!"Prepare the following actions?\n\n  refactor deprecated {lib}\n\nThis will refactor the following modules:\n  {mods.toList}") (s := { suggestion := .string "dive\n  prepare" })
+    addSuggestion tk (header := s!"Prepare the following actions?\n\n  \
+          {ref.reprint.getD s!"{ref}"}\n\n\
+        This will refactor {String.andList (keys.map (·.toHumanReadableString)).toList}.")
+      (s := { suggestion := .string "dive\n  prepare" })
 | `(command|dive%$tk prepare%$p) => do
-  -- let ws ← IO.loadWorkspace
-  -- for lib in ws.root.leanLibs do
-  --   if (← refactorLibRef.get).contains lib.name then
-      let lib'name := `WorkingTest
-      let toBuildFile s : System.FilePath := ".lake" / "build" /"lib" /"lean"/ "WorkingTest" / s!"{s}.json.skimmed"
-      let modSuffixes := #[`Test, `ReviewTest]
-      let e ← IO.Process.run {
-        cmd := "lake"
-        args := #["exe", exeName, lib'name.toString]
-      }
+  let (ref, keys) ← refactorTgtRef.get
+  if ref.isMissing then throwError "No action registered yet."
+  IO.Lake.checkTarget keys
 
+  let mut result : Skimmer.EditMData := {}
+  for key in keys do
+    let path ← IO.Lake.query (.facet key `recordRefactors) System.FilePath
+    -- TODO: read in the full edits here? Or laazily do so for a widget, at least
+    result := result ++ (← Skimmer.EditMData.read path)
+  let modules := result.modules.foldl (init := {}) NameSet.insert
+  let reviewStr := if result.numReviews = 0 then "" else
+    s!", {result.numReviews} of which needs review"
+  -- for (mod, edit) in edits do
+  --   let reviewStr := if edit.any (·.shouldReview?.isSome) then s!", {edit.countP (·.shouldReview?.isSome)} of which needs review:\n{"\n".intercalate (edit.filter (·.shouldReview?.isSome) |>.map fun { replacement, shouldReview? .. } => "  " ++ shouldReview?.get! ++ " => " ++ replacement).toList }" else "."
+  --   header := s!"{header}----\n{mod}:\n\nPrepared {edit.size} refactors{reviewStr}\n"
 
-      let mut edits := #[]
-      for mod in modSuffixes do
-        edits := edits.push (`WorkingTest ++ mod, ← getRecordedEdits (toBuildFile mod))
-      let mut header : String := s!"Prepared refactors for {edits.size} modules.\n"
-      for (mod, edit) in edits do
-        let reviewStr := if edit.any (·.shouldReview?.isSome) then s!", {edit.countP (·.shouldReview?.isSome)} of which needs review:\n{"\n".intercalate (edit.filter (·.shouldReview?.isSome) |>.map fun { replacement, shouldReview? .. } => "  " ++ shouldReview?.get! ++ " => " ++ replacement).toList }" else "."
-        header := s!"{header}----\n{mod}:\n\nPrepared {edit.size} refactors{reviewStr}\n"
-
-
-      liftCoreM do
-        addSuggestion (mkNullNode #[tk, p]) (header := s!"{header}\nApply refactors?") (s := { suggestion := .string "dive\n  prepare\n  execute" })
+  let mut header : String :=
+    s!"Prepared {result.numEdits} refactors for {modules.size} modules{reviewStr}.\n"
+  liftCoreM do
+    addSuggestion (mkNullNode #[tk, p]) (header := s!"{header}\nApply refactors?") (s := { suggestion := .string "dive\n  prepare\n  execute" }) -- TODO: fix. low prio
 | `(command|dive prepare execute) => do
-  -- let ws ← IO.loadWorkspace
-  -- for lib in ws.root.leanLibs do
-  --   if (← refactorLibRef.get).contains lib.name then
-    -- let lib'name := `WorkingTest
-    let toBuildFile s : System.FilePath := ".lake" / "build" /"lib" /"lean"/ "WorkingTest" / s!"{s}.json.skimmed"
-    let modSuffixes := #[`Test, `ReviewTest]
-    for mod in modSuffixes do
-      let edits ← getRecordedEdits (toBuildFile mod)
-      let source ← IO.FS.readFile ("WorkingTest" / s!"{mod.toString}.lean")
-      IO.FS.writeFile ("WorkingTest" / s!"{mod.toString}.lean") (source.applyEdits edits)
-      IO.FS.writeFile (toBuildFile mod) ""
-      logInfo m!"Wrote {edits.size} edits to {mod}."
+  let (ref, keys) ← refactorTgtRef.get
+  if ref.isMissing then throwError "No action registered yet."
+  IO.Lake.checkTarget keys
+
+  for key in keys do
+    IO.Lake.build (.facet key `applyRefactors)
+  logInfo m!"Applied refactors!\n\nPlease make a commit."
