@@ -5,12 +5,12 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public meta import Skimmer.Refactor.Edit
+public import Skimmer.Refactor.Edit
 public import Skimmer.AttrUtil
-public meta import Skimmer.LinterWithCleanup.Run
-public meta import Skimmer.AccumulativeLinter
+public import Skimmer.LinterWithCleanup.Run
+public import Skimmer.AccumulativeLinter
 
-public meta section
+public section
 
 open Lean Elab Command
 
@@ -27,6 +27,18 @@ deriving Inhabited
 
 /-- We use a linter-like model to make it easier to load these as plugins and access them during linting. -/
 initialize refactorsRef : IO.Ref (Array Refactor) ← IO.mkRef #[]
+
+/- TODO: currently we're taking a purely external appraoch. We'll want to reinstate this (or something like it) to give downstream users the chance to record edits from within their own metaprograms. -/
+/-- The extension holding all edits produced by any refactor. -/
+-- TODO: we might also want to hold failures/errors/"uncertain edits" which need approval here.
+initialize editExt : PersistentEnvExtension Edit (Array Edit) (Array Edit) ←
+  registerPersistentEnvExtension {
+    mkInitial := pure #[]
+    addImportedFn := fun _ => pure #[]
+    addEntryFn := Array.append
+    statsFn edits := f!"{edits.size} edits"
+    exportEntriesFnEx _ edits _ := edits.qsortOrd
+  }
 
 def addRefactor (r : Refactor) : IO Unit :=
   refactorsRef.modify (·.push r)
@@ -66,8 +78,8 @@ def runRefactors (stx : Syntax) : CommandElabM (Array Edit) := do
 
 initialize registerTraceClass `Skimmer.Refactor
 
-/-- Runs all refactors. -/
-initialize refactorLinter : SimpleAppendLinter Edit ←
-  SimpleAppendLinter.registerAndAddUsingExt editExt { produce := runRefactors }
+-- /-- Runs all refactors. -/
+-- initialize refactorLinter : SimpleAppendLinter Edit ←
+--   SimpleAppendLinter.registerAndAddUsingExt editExt { produce := runRefactors }
 
 -- TODO: rules that apply to any syntax, keyed by syntaxnodekind

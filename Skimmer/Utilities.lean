@@ -5,12 +5,12 @@ Authors: Thomas R. Murrills
 -/
 module
 
-public meta import Skimmer.Extension
+public import Skimmer.Extension
 public import Lean
 public import Batteries
 -- TODO: reduce imports
 
-@[expose] public meta section
+public section
 
 open Lean Skimmer
 
@@ -18,27 +18,17 @@ def Skimmer.Edit.delete (range : Syntax.Range) : Edit where
   range
   replacement := ""
 
-theorem String.ValidPos.le_endValidPos {s : String} (i : s.ValidPos) : i ≤ s.endValidPos :=
-  i.isValid.le_rawEndPos
-
-theorem String.ValidPos.ne_endValidPos_of_lt {s : String} {i j : s.ValidPos} (h : i < j) :
-    i ≠ s.endValidPos := by
-  have := j.le_endValidPos
-  simp [lt_iff, le_iff, String.ValidPos.ext_iff,
-    String.Pos.Raw.lt_iff, String.Pos.Raw.le_iff, String.Pos.Raw.ext_iff] at *
-  grind only
-
 -- In future: need to account for things like code fencing. Should maybe detect by lack of good punctiation at end?
-def removeBadNewlines (s : String) (stop : s.ValidPos := s.endValidPos) : Array Edit := Id.run <| do
-  let mut i : s.ValidPos := s.startValidPos
+def removeBadNewlines (s : String) (stop : s.Pos := s.endPos) : Array Edit := Id.run <| do
+  let mut i : s.Pos := s.startPos
   let mut numConsecNewlines := 0
-  let mut startConsecNewline : s.ValidPos := s.startValidPos
-  let mut mostRecentNewline : s.ValidPos := s.startValidPos
+  let mut startConsecNewline : s.Pos := s.startPos
+  let mut mostRecentNewline : s.Pos := s.startPos
   let mut edits : Array Edit := #[]
   while h : i < stop do
-    let c := i.get (String.ValidPos.ne_endValidPos_of_lt h)
+    let c := i.get (String.Pos.ne_endPos_of_lt h)
     -- TODO: move to after when possible...
-    let next := i.next (String.ValidPos.ne_endValidPos_of_lt h)
+    let next := i.next (String.Pos.ne_endPos_of_lt h)
     -- pure ()
     if true then pure () else pure ()
     if c == '\n' then
@@ -86,7 +76,7 @@ instance : Ord Lean.Position where
 
 namespace String
 
-/-! TODO: update to `ValidPos` -/
+/-! TODO: update to `Pos` -/
 
 open String in
 @[inline] def matchAtMostNAux (s : String) (p : Char → Bool) (stopPos : String.Pos.Raw)
@@ -216,28 +206,28 @@ def getLines (map : FileMap) (range : Syntax.Range) : Nat × Nat :=
 
 end Lean.FileMap
 
-elab "#test" doc:docComment : command => do
-  if let some range := doc.raw.getRange? then
-    let map ← getFileMap
-    let (firstLine, lastLine) := map.getLines range
-    let some edits := map.dedents? range (some 0) true | logWarning "No edits"
-    logInfo m!"{edits}"
-    -- let i := map.source.findExtraSpaceIndentBySecondLine? range.1 range.2
-    let some i := map.source.findNontrivialStartOfLine? range.1 range.2 | throwError "no start"
-    logInfo m!"i: \"{repr <| i.get map.source}\" @{i}"
-    let j := map.source.match (· = ' ') i range.2
-    logInfo m!"j: \
-      {j.1} {repr <| j.2.get map.source}@{j} {j.2} ~ {range.2} {decide <| j.2 < range.2}"
-    let poses := Id.run do
-      let mut a := #[]
-      let mut pos := range.2
-      for _ in [:5] do
-        a := a.push pos
-        pos := pos.next map.source
-      pure a
-    logInfo m!"poses := {poses}"
-    let newMap := (map.source.applyEdits edits.qsortOrd).toFileMap
-    logInfo m!"{newMap.getLineContents firstLine lastLine}"
+-- elab "#test" doc:docComment : command => do
+--   if let some range := doc.raw.getRange? then
+--     let map ← getFileMap
+--     let (firstLine, lastLine) := map.getLines range
+--     let some edits := map.dedents? range (some 0) true | logWarning "No edits"
+--     logInfo m!"{edits}"
+--     -- let i := map.source.findExtraSpaceIndentBySecondLine? range.1 range.2
+--     let some i := map.source.findNontrivialStartOfLine? range.1 range.2 | throwError "no start"
+--     logInfo m!"i: \"{repr <| i.get map.source}\" @{i}"
+--     let j := map.source.match (· = ' ') i range.2
+--     logInfo m!"j: \
+--       {j.1} {repr <| j.2.get map.source}@{j} {j.2} ~ {range.2} {decide <| j.2 < range.2}"
+--     let poses := Id.run do
+--       let mut a := #[]
+--       let mut pos := range.2
+--       for _ in [:5] do
+--         a := a.push pos
+--         pos := pos.next map.source
+--       pure a
+--     logInfo m!"poses := {poses}"
+--     let newMap := (map.source.applyEdits edits.qsortOrd).toFileMap
+--     logInfo m!"{newMap.getLineContents firstLine lastLine}"
 
 
 -- #test
@@ -267,29 +257,29 @@ elab "#test" doc:docComment : command => do
 
     5
   -/
-elab "#show_filemap" : command => do
-  let map ← getFileMap
-  -- logInfo m!"{map.positions}"
-  let line := 107
-  let lineEnd := 112
-  let r : Syntax.Range := ⟨map.lineStart line + ⟨2⟩, map.lineStart lineEnd⟩
-  let lineStart := map.lineStart (map.toPosition r.start).line
-  let precededBy := lineStart.extract map.source r.start
-  let indent := if precededBy.all (· = ' ') then precededBy.rawEndPos else 0
-  logInfo m!"{repr <| "(" ++ r.1.extract map.source r.2 ++ ")"}"
-  logInfo m!"{indent}"
+-- elab "#show_filemap" : command => do
+--   let map ← getFileMap
+--   -- logInfo m!"{map.positions}"
+--   let line := 107
+--   let lineEnd := 112
+--   let r : Syntax.Range := ⟨map.lineStart line + ⟨2⟩, map.lineStart lineEnd⟩
+--   let lineStart := map.lineStart (map.toPosition r.start).line
+--   let precededBy := lineStart.extract map.source r.start
+--   let indent := if precededBy.all (· = ' ') then precededBy.rawEndPos else 0
+--   logInfo m!"{repr <| "(" ++ r.1.extract map.source r.2 ++ ")"}"
+--   logInfo m!"{indent}"
 
 
-elab "#show_doc " doc:docComment : command => do
-  -- logInfo m!"\"{repr <| doc.raw.getArg 1}\""
-  let val := doc.raw[1].getAtomVal
-  let some stop := val.endValidPos.prev? |>.bind (·.prev?)
-    | throwError "Couldn't move back 2 characters from the end."
-  let edits := removeBadNewlines val (stop := stop)
-  let some edit := edits[0]? | throwError "empty"
-  logInfo m!"edit: {repr edit}}"
-  logInfo m!"extracted:\n\"{edit.range.1.extract doc.raw[1].getAtomVal  edit.range.2}\""
-  logInfo m!"\"{repr doc.raw[1]}\""
+-- elab "#show_doc " doc:docComment : command => do
+--   -- logInfo m!"\"{repr <| doc.raw.getArg 1}\""
+--   let val := doc.raw[1].getAtomVal
+--   let some stop := val.endPos.prev? |>.bind (·.prev?)
+--     | throwError "Couldn't move back 2 characters from the end."
+--   let edits := removeBadNewlines val (stop := stop)
+--   let some edit := edits[0]? | throwError "empty"
+--   logInfo m!"edit: {repr edit}}"
+--   logInfo m!"extracted:\n\"{edit.range.1.extract doc.raw[1].getAtomVal  edit.range.2}\""
+--   logInfo m!"\"{repr doc.raw[1]}\""
 
 -- #print getDocStringText
 

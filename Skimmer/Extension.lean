@@ -11,7 +11,7 @@ public import Skimmer.Refactor.Init
 
 @[expose] public section
 
-open Lean Skimmer
+open Lean Skimmer Command
 
 @[inline] def Lean.Environment.getModuleName (env : Environment) (idx : Nat) :
     Option Name := env.header.modules[idx]?.map (·.module)

@@ -11,6 +11,8 @@ This file adds a command of convenience for locally adding a linter (and allowin
 
 open Lean Elab Term Command Linter
 
+public section
+
 syntax localLinterDef := ident declVal
 syntax localLinterClear := &"clear " (&"all" <|> ident)
 syntax localLinterArgs := localLinterClear <|> localLinterDef
@@ -36,10 +38,7 @@ elab_rules : command
   -- Instead of elaborating directly into an `Expr`, we use `#eval`'s approach to allow `let rec`s.
   let defView := mkDefViewOfDef { isUnsafe := true, visibility := .private } <|←
     `(definition| def $(mkIdentFrom id (`_root_ ++ tempRunName)) : $(← Term.exprToSyntax type) $val:declVal)
-  -- Allow access to both `meta` and non-`meta` declarations as the compilation result does not
-  -- escape the current module.
-  withOptions (Compiler.compiler.checkMeta.set · false) do
-    Term.elabMutualDef #[] { header := "" } #[defView]
+  Term.elabMutualDef #[] { header := "" } #[defView]
   -- TODO: investigate why `local_linter foo := fun` reaches unreachable code;
   -- this is a hack that prevents that.
   -- TODO: handle potential internal error better
