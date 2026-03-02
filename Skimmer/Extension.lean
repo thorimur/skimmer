@@ -63,7 +63,7 @@ def showEdits (env : Environment) (root : Name) : IO Unit := do
       IO.println s!"writing {edits.size} edits to {mod} @ {path}:"
       let text ← IO.FS.readFile path
       let mut out : String := ""
-      let mut prevEndPos : text.ValidPos := text.startValidPos
+      let mut prevEndPos : text.Pos := text.startPos
       for edit in edits do -- note: already sorted
         let some slice := edit.range.toSliceOf? text | continue -- TODO: trace/error
         if h : prevEndPos ≤ slice.startInclusive then
@@ -75,6 +75,6 @@ def showEdits (env : Environment) (root : Name) : IO Unit := do
           out := out ++ edit.replacement
           prevEndPos := slice.endExclusive
         -- TODO: trace/error if not
-      out := out ++ text.replaceStart prevEndPos
+      out := out ++ text.sliceFrom prevEndPos
       IO.println <| s!"-----\n" ++ out ++ s!"-----"
       -- IO.FS.writeFile path out
