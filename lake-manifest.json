@@ -5,11 +5,11 @@
    "type": "git",
    "subDir": null,
    "scope": "leanprover-community",
-   "rev": "30cfb2255996f3e6217a77fd940fde1f3e12ccc2",
+   "rev": "ed250d06b33e67aa5dc5f2cc349a5a35e8b6b390",
    "name": "batteries",
    "manifestFile": "lake-manifest.json",
    "inputRev": "main",
    "inherited": false,
    "configFile": "lakefile.toml"}],
- "name": "Skimmer",
+ "name": "skimmer",
  "lakeDir": ".lake"}
