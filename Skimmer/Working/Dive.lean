@@ -3,10 +3,11 @@ Copyright (c) 2026 Thomas R. Murrills. All rights reserved.
 Released under Apache 2.0 license as described in the file LICENSE.
 Authors: Thomas R. Murrills
 -/
-import Lean
-import Skimmer.Working.Main
-import Skimmer.Working.LakeIO
-import Batteries
+module
+
+public meta import Skimmer.Working.LakeIO
+import Batteries.Util.Pickle
+public meta import Lake
 
 open Lean
 
@@ -125,6 +126,8 @@ namespace Skimmer
 
 open Skimmer
 
+public meta section
+
 syntax Lake.tgtSpec := ("+" noWs)? ident (noWs ":" noWs ident)?
 syntax Lake.pkgSpec := ("@" noWs)? ident (noWs "/" noWs (Lake.tgtSpec)?)?
 syntax Lake.buildSpec := Lake.tgtSpec <|> Lake.pkgSpec
@@ -139,7 +142,7 @@ def _root_.Lake.PartialBuildKey.toHumanReadableString
     (key : Lake.PartialBuildKey) (capital := false) : String :=
   let t := if capital then "T" else "t"
   match key with
-  | .module mod => s!"{t}he module {mod}"
+  | Lake.BuildKey.module mod => s!"{t}he module {mod}"
   | .packageModule pkg mod => s!"{t}he module {mod}{
     if pkg.isAnonymous then "" else s!" in package {pkg}"}"
   | .packageFacet pkg facet => s!"{t}he facet {facet}{
@@ -152,7 +155,7 @@ def _root_.Lake.PartialBuildKey.toHumanReadableString
 deriving instance BEq, Hashable for Lake.PartialBuildKey
 
 -- TODO: just for demo purposes. env extension is the right way
-initialize refactorTgtRef : IO.Ref (Syntax × Array Lake.PartialBuildKey) ←
+meta initialize refactorTgtRef : IO.Ref (Syntax × Array Lake.PartialBuildKey) ←
   IO.mkRef (.missing, {})
 
 elab_rules : command
