@@ -162,7 +162,29 @@ elab "inline_modules " mods:Parser.ident+ : command => do
 
 end Inline
 
-inline_modules Skimmer.Refactor.Lake
+inline_modules Skimmer.Refactor.Lake Skimmer.LakeSerialized
+
+-- TODO: write this to a json file somewhere
+target workspace : Serialized.Workspace := do
+  let ws ← getWorkspace
+  return Job.pure ws.toSerializedWorkspace
+
+target facetNames : Array Name := do
+  let facetCfgs := (← getWorkspace).facetConfigs.toArray.map (·.fst)
+    |>.filter (!(`default).isSuffixOf ·)
+    |>.qsort (·.lt)
+  return Job.pure facetCfgs
+
+target libraries (pkg) : Array Name := do
+  return Job.pure <| pkg.leanLibs.map (·.name) |>.qsort Name.lt
+
+target targetNames (pkg) : Array Name := do
+  return Job.pure <| (pkg.targetDecls.map (·.name)).qsort Name.lt
+
+script checkTarget (args) do
+  discard <| parseTargetSpecs (← getWorkspace) args |>.toIO fun cliError => cliError.toString
+  IO.Process.exit 0
+
 
 -- TODO: we may want instead to stick to general `FetchM` functions.
 
