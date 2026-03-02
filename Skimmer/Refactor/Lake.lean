@@ -142,8 +142,8 @@ def RefactorArgs.readReplacements (args : RefactorArgs) : IO (NameMap Name) := d
   if args.replacements.isEmpty then return {} else
     let mut r : NameMap Name := {}
     for file in args.replacements do
-      let more ← file.readJson (NameMap Name)
-      r := r.union more
+      let { replacements .. } ← file.readJson EditsRecord
+      r := r.union replacements
     return r
 
 end Skimmer
