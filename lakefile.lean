@@ -118,10 +118,14 @@ partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
 
 partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) :
     CommandElabM NameSet := if processedModules.contains mod then return processedModules else do
-  let file := modToFilePath "." mod "lean"
+  let mut file := modToFilePath "." mod "lean"
   unless ← file.pathExists do
+    -- TODO: not all packages use the default location for dependencies, necessarily.
+    -- the principled thing is to get this from the root somehow
+    file := modToFilePath ("." / ".lake" / ".packages") mod "lean"
+    unless ← file.pathExists do
     -- TODO: could also look in lake packages
-    throwError "Could not locate file {file}"
+      throwError "Could not locate file {file}"
   let src ← IO.FS.readFile file -- TODO: command-click on `mod`
   let ictx := mkInputContext src file.toString
   let (header, s, log) ← parseHeader ictx
