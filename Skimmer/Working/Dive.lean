@@ -161,6 +161,7 @@ meta initialize refactorTgtRef : IO.Ref (Syntax × Array Lake.PartialBuildKey) �
 elab_rules : command
 | `(refactor deprecated $stx:Lake.buildSpec*) => do
   let buildKeys ← stx.mapM (ofExcept <| toPartialBuildKey ·)
+  IO.Lake.checkTarget buildKeys
   refactorTgtRef.set (← getRef, buildKeys)
 
 -- TODO: make these actions extensible by subtools, and automatically integrate them with interactive choices for the next ones. nested `?` isn't ideal. Could just use an array then check for wellformedness during elaboration
