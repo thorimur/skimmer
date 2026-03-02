@@ -1,4 +1,5 @@
 import Lake
+import Lake.CLI
 
 -- open System Lean
 
@@ -245,61 +246,61 @@ module_facet recordRefactors (mod) : System.FilePath := do
           cmd := "lake"
           args := #["exe", "working", (toJson args).compress]
         }
-      return Job.pure args.buildFile
+      return Job.pure args.buildFile -- TODO: correct?
 
 open Skimmer
-
-/-- For now, this is just the list of buildfile paths. -/
-structure GlobalEditMData where
-  buildFiles : Array System.FilePath
-deriving ToJson, FromJson, Inhabited
-
-def Lake.LeanLib.skimmerDir (lib : LeanLib) : System.FilePath :=
-  lib.pkg.buildDir / "skimmer"
-
--- TODO: pattern more closely off of `filePath`
-def Lake.LeanLib.skimmerGlobalEditMDataFile (lib : LeanLib) : System.FilePath :=
-  lib.skimmerDir / "globalEditMData.json"
 
 library_facet recordRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
     let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
     mods.mapM fun buildFiles => do
-      let file := lib.skimmerGlobalEditMDataFile
+      let file := lib.skimmerFilePath "editmdata" "json"
       discard <| buildArtifactUnlessUpToDate file do
         Lake.createParentDirs file
-        IO.FS.writeFile file (toJson { buildFiles : GlobalEditMData }).compress
+        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles)).compress
+      return file
+
+package_facet recordRefactors (pkg) : System.FilePath := do
+  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+  aamods.bindM fun aamods => do
+    -- TODO: abstract out into package_facet modules
+    let mut modset : ModuleSet := {}
+    let mut mods := #[]
+    for amods in aamods do
+      for mod in amods do
+        unless modset.contains mod do
+          mods := mods.push mod
+          modset := modset.insert mod
+    let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
+    buildFiles.mapM fun buildFiles => do
+      let file := pkg.skimmerFilePath "editmdata" "json"
+      discard <| buildArtifactUnlessUpToDate file do
+        Lake.createParentDirs file
+        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles)).compress
       return file
 
 -- TODO: record the trace or hash in the recorded edits. Invalidate if it doesn't match the lean file hash.
 -- TODO: better return value. Right now it returns the filepath. We may call out into something more interactive here.
-module_facet applyRefactors (mod) : Unit := do
-  -- TODO(NOW): we SHOULD NOT do this. We should essentially always be running under `--no-build` but for recording refactors.
-  -- Is `checkNoBuild` automatic? Do I need to handle `noBuild` config in `recordRefactors`?
-  let art ← fetch <| mod.facet `recordRefactors
-  art.mapM fun recordPath => do
+module_facet applyRefactors (mod) : System.FilePath := do
+  -- Note: this only works by relying on `buildArtifactUnlessUpToDate`.
+  -- We do check things twice, which is unfortunate, but no big deal.
+  let isUpToDate ← (← getWorkspace).checkNoBuild <| fetch <| mod.facet `recordRefactors
+  unless isUpToDate do
+    -- TODO: better error? should we error at all, or return something useful?
+    error s!"Recorded refactors for {mod} are not up-to-date."
+  let recordPath ← fetch <| mod.facet `recordRefactors
+  recordPath.mapM fun recordPath => do
+    -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
     let edits ← EditsRecord.readEdits recordPath
-    let src ← IO.FS.readFile mod.leanFile
-    IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+    unless edits.isEmpty do
+      let src ← IO.FS.readFile mod.leanFile
+      IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+    return recordPath
 
 library_facet applyRefactors (lib) : Unit := do
   (← lib.modules.fetch).mapM fun mods => do
     let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
     discard <| mods.await -- hmmm, is this correct?
-
-    -- fun _ _ replacementPaths => do
-    --   let args := mod.mkRefactorArgs replacementPaths
-    --   discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-    --     discard <| captureProc { -- todo: check using correct proc
-    --       cmd := "lake"
-    --       args := #["exe", "working", (toJson args).compress]
-    --     }
-    --   return Job.pure args.buildFile
-
-    -- TODO: read the mdata from the files, then aggregate into a single file.
-    -- A bit difficult, since it requires duplicating the Lean definitions in the lakefile.
-    -- Could also drive this in an exe to accommodate other collections of modules. Or have new targets that represent these, where the modules given are arguments/env variables
-
 
 -- module_facet pickleJar (mod : Module) : Unit := do
 --   recFetchShadowingBuildWhere mod `pickleJar (filter := some (·.inRootPackage)) fun _ mods _ => do
