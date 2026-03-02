@@ -1,7 +1,15 @@
+/-
+Copyright (c) 2026 Thomas R. Murrills. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Thomas R. Murrills
+-/
+module
 
-import Lean
+public import Lean
 
 namespace Skimmer
+
+public section
 
 syntax (name := reviewTermStx) "review% " "(" term " => " term ")" : term
 
@@ -24,7 +32,7 @@ open Lean Meta Elab Term Tactic.TryThis
         (header := "Generated term is successful. Would you like to accept it?")
       return e
     | .error ex _ =>
-      -- TODO: need to restore state for error?
+      -- TODO(check): need to restore state for error?
       logWarningAt t₁ m!"Generated term failed with error:{indentD ex.toMessageData}"
     elabTerm t₀ expectedType?
   | _, _ => throwUnsupportedSyntax
