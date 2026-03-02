@@ -252,12 +252,12 @@ open Skimmer
 
 library_facet recordRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
-    let mods := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
-    mods.mapM fun buildFiles => do
+    let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
+    buildFiles.mapM fun buildFiles => do
       let file := lib.skimmerFilePath "editmdata" "json"
       discard <| buildArtifactUnlessUpToDate file do
         Lake.createParentDirs file
-        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles)).compress
+        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles mods)).compress
       return file
 
 package_facet recordRefactors (pkg) : System.FilePath := do
@@ -276,7 +276,7 @@ package_facet recordRefactors (pkg) : System.FilePath := do
       let file := pkg.skimmerFilePath "editmdata" "json"
       discard <| buildArtifactUnlessUpToDate file do
         Lake.createParentDirs file
-        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles)).compress
+        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles mods)).compress
       return file
 
 -- TODO: record the trace or hash in the recorded edits. Invalidate if it doesn't match the lean file hash.
