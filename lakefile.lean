@@ -116,6 +116,8 @@ partial def parseAndElabAux (ictx : InputContext) (ctx : ParserModuleContext)
       currNamespace := ← getCurrNamespace }
   parseAndElabAux ictx ctx s log ref mod
 
+#check IO.currentDir
+
 partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) :
     CommandElabM NameSet := if processedModules.contains mod then return processedModules else do
   let mut file := modToFilePath "." mod "lean"
@@ -125,7 +127,7 @@ partial def elabModule (ref : Syntax) (mod : Name) (processedModules : NameSet) 
     file := modToFilePath ("." / ".lake" / ".packages" / "skimmer") mod "lean"
     unless ← file.pathExists do
     -- TODO: could also look in lake packages
-      throwError "Could not locate file {file}"
+      throwError "Could not locate file {file}.\ncurrent directory: {← IO.currentDir}"
   let src ← IO.FS.readFile file -- TODO: command-click on `mod`
   let ictx := mkInputContext src file.toString
   let (header, s, log) ← parseHeader ictx
