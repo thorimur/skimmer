@@ -243,12 +243,9 @@ module_facet recordRefactors (mod) : System.FilePath := do
     (filter := some fun i => return i.pkg == mod.pkg)
     fun _ _ replacementPaths => do
       (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
-        let args := mod.mkRefactorArgs replacementPaths
+        let args := mod.mkRefactorArgs `recordRefactors replacementPaths
         discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-          discard <| captureProc { -- todo: check using correct proc
-            cmd := "lake"
-            args := #["exe", "working", (toJson args).compress]
-          }
+          discard <| captureProc <|← Lake.exeSpawnArgs `working #[(toJson args).compress]
         return args.buildFile -- TODO: correct?
 
 open Skimmer
@@ -259,8 +256,7 @@ library_facet recordRefactors (lib) : System.FilePath := do
     buildFiles.mapM fun buildFiles => do
       let file := lib.skimmerFilePath "editmdata" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        Lake.createParentDirs file
-        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles mods)).compress
+        file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
 package_facet recordRefactors (pkg) : System.FilePath := do
@@ -278,8 +274,7 @@ package_facet recordRefactors (pkg) : System.FilePath := do
     buildFiles.mapM fun buildFiles => do
       let file := pkg.skimmerFilePath "editmdata" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        Lake.createParentDirs file
-        IO.FS.writeFile file (toJson (mkDummyEditsRecord buildFiles mods)).compress
+        file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
 -- TODO: record the trace or hash in the recorded edits. Invalidate if it doesn't match the lean file hash.

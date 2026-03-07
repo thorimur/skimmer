@@ -32,10 +32,11 @@ public section
 
 namespace IO.Lake
 
-def build (target : PartialBuildKey) (input? : Option String := none) : IO Unit := do
+def build (target : PartialBuildKey) (flags : Array String := #[])
+    (input? : Option String := none) : IO Unit := do
   discard <| IO.Process.run (input? := input?) {
     cmd := "lake"
-    args := #["build", target.toString]
+    args := #["build", target.toString] ++ flags
   }
 
 def _root_.Lake.PartialBuildKey.customTarget (target : Name) (pkg : Name := .anonymous) :

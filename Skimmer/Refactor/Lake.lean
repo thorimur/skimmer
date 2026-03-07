@@ -8,6 +8,22 @@ open Lean
 
 public section
 
+/-- Exactly like `Lake.env`, but just provides the `SpawnArgs`. -/
+public def Lake.envSpawnArgs.{u} {m : Type → Type u} [MonadWorkspace m] [Monad m]
+    (cmd : String) (args : Array String := #[]) :
+    m IO.Process.SpawnArgs := return {cmd, args, env := ← getAugmentedEnv}
+
+/-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. -/
+public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
+    [MonadWorkspace m] [Monad m] [MonadLiftT IO m] [MonadError m]
+    (name : Name) (args  : Array String := #[])
+    (buildConfig : BuildConfig := {}) : m IO.Process.SpawnArgs := do
+  let ws ← getWorkspace
+  let some exe := ws.findLeanExe? name
+    | error s!"unknown executable `{name}`"
+  let exeFile ← ws.runBuild exe.fetch buildConfig
+  Lake.envSpawnArgs exeFile.toString args
+
 def Lake.Package.skimmerDir (pkg : Package) : System.FilePath :=
   pkg.buildDir / "skimmer"
 
@@ -40,26 +56,32 @@ end Lake.Module
 
 namespace Skimmer
 
+-- TODO: Is it alright to put these `System.FilePath`s in the build files? Certainly not great for caching. Hmm, what information does lake need to construct the actual filepaths? We could save that, and just always figure out the filepaths before passing into the exe. Are they relative?
+
 -- Temporary approach: write everything to one big file so it's an "artifact"
 
 structure EditMData where
   -- TODO: include locations
   numEdits : Nat
   numReviews : Nat
-  /-- Used temporarily for global "aggregation". Probably won't be permanent. We assume this is not used recursively. -/
-  moreFiles : Array System.FilePath := #[]
-  modules : Array Name
-deriving ToJson, FromJson, Inhabited, Hashable
+deriving ToJson, FromJson, Inhabited, Hashable, Repr
 
-instance : EmptyCollection EditMData := ⟨⟨0,0,#[],#[]⟩⟩
+instance : EmptyCollection EditMData := ⟨⟨0,0⟩⟩
 
 instance : Append EditMData where
   append m₀ m₁ := {
     numEdits := m₀.numEdits + m₁.numEdits
     numReviews := m₀.numReviews + m₁.numReviews
-    moreFiles := m₀.moreFiles ++ m₁.moreFiles
-    modules := m₀.modules ++ m₁.modules
   }
+
+/-- Currently just holds the location of all EditsRecord files. In the future, when buildArtifactUnlessUpToDate can build multiple files or we have some other intermediary, this should point to the edits-/
+structure GlobalEditMData where
+  arts : Array (Name × System.FilePath)
+deriving ToJson, FromJson, Inhabited, Hashable
+
+def mkGlobalEditMData (buildFiles : Array System.FilePath) (mods : Array Lake.Module) :
+    GlobalEditMData where
+  arts := mods.map (·.name) |>.zip buildFiles
 
 /-- Written to Json to record edits. If present, `preview` contains the file with edits applied.
 TODO: `NameMap` could get bulky, and in standard operation we'd write it many times, even when not changing it. This should be improved.
@@ -71,26 +93,26 @@ In the future, these should be split out into separate build files. The obstruct
 structure EditsRecord where
   mdata : EditMData
   edits : Array Edit
-  replacements : NameMap Name
   preview : Option String
-deriving ToJson, FromJson, Inhabited
+deriving ToJson, FromJson, Inhabited, Repr
 
-def mkDummyEditsRecord (moreFiles : Array System.FilePath) (mods : Array Lake.Module) : EditsRecord where
-  mdata := {
-    numEdits := 0
-    numReviews := 0
-    moreFiles
-    modules := mods.map (·.name)
-  }
-  edits := #[]
-  replacements := {}
-  preview := none
+structure EditsRecordWithState α extends EditsRecord where
+  state : α
+deriving Inhabited
 
-def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit := do
-  Lake.createParentDirs buildFile
-  IO.FS.writeFile buildFile (toJson e).compress
+-- TODO: why can't these be derived?
+instance [ToJson α] : ToJson (EditsRecordWithState α) where
+  toJson x := toJson x.toEditsRecord |>.mergeObj <| Json.mkObj [("state", toJson x.state)]
 
-variable (s : String)
+instance [FromJson α] : FromJson (EditsRecordWithState α) where
+  fromJson? x := do
+    let toEditsRecord : EditsRecord ← fromJson? x
+    let state ← x.getObjValAs? α "state"
+    return { toEditsRecord, state }
+
+def _root_.System.FilePath.writeJson (file : System.FilePath) (a : α) [ToJson α] : IO Unit := do
+  Lake.createParentDirs file
+  IO.FS.writeFile file (toJson a).compress
 
 @[inline] def _root_.String.readJson? {α : Type} [FromJson α] (s : String) : Except String α := do
   fromJson? <|← Json.parse s
@@ -102,20 +124,25 @@ def EditsRecord.readEdits (path : System.FilePath) : IO (Array Edit) :=
   (·.edits) <$> path.readJson EditsRecord
 
 -- TODO: this will become more informative
-def EditMData.read (path : System.FilePath) : IO EditMData := do
-  let { mdata .. } ← path.readJson EditsRecord
-  if mdata.moreFiles.isEmpty then
-    return mdata
-  else
-    let mut result : EditMData := {}
-    for path in mdata.moreFiles do
-      let { mdata .. } ← path.readJson EditsRecord
-      result := result ++ mdata
-    return result
+def EditMData.ofEditsRecord (path : System.FilePath) : IO EditMData := do
+  return (← path.readJson EditsRecord).mdata
 
-/-- Written by an `applyRefactor` facet/action. -/
-structure EditsWrittenRecord where
-  newLeanFileHash : Option Lake.Hash
+def EditMData.ofGlobalEditMData (path : System.FilePath) : IO EditMData := do
+  let { arts } ← path.readJson GlobalEditMData
+  let mut result : EditMData := {}
+  for (_, path) in arts do
+    result := result ++ (← EditMData.ofEditsRecord path)
+  return result
+
+def EditsRecord.write (buildFile : System.FilePath) (e : EditsRecord) : IO Unit :=
+  buildFile.writeJson e
+
+def EditMData.write (buildFile : System.FilePath) (e : EditMData) : IO Unit := do
+  buildFile.writeJson e
+
+-- /-- Written by an `applyRefactor` facet/action. -/
+-- structure EditsWrittenRecord where
+--   newLeanFileHash : Option Lake.Hash
 
 -- TODO: This is a workaround to let us jsonify what we need from `Lake.Module`s. Is there a better way...? Kind of surprised `Lake.Module`s don't jsonify.
 public structure Lake.JsonModule where
@@ -131,20 +158,25 @@ This is intended to be small and easy to compute, as it will be passed over json
 As usual, buildfile paths are synchronized by calling the same constructor on common `Lake.Module`s rather than passing the paths around.
 -/
 public structure RefactorArgs where
+  name : Name
   mod : Lake.JsonModule
-  replacements : Array System.FilePath
+  importArts : Array System.FilePath
   buildFile : System.FilePath
   preview : Bool
 deriving Inhabited, ToJson, FromJson
 
+def RefactorArgs.readState (args : RefactorArgs) [FromJson α] (empty : α) (merge : α → α → α) :
+    IO α := do
+  if args.importArts.isEmpty then return empty else
+    let mut r : α := empty
+    for file in args.importArts do
+      let { state .. } ← file.readJson <| EditsRecordWithState α
+      r := merge r state
+    return r
+
 -- currently assumes we get all replacements we need from the direct imports
 def RefactorArgs.readReplacements (args : RefactorArgs) : IO (NameMap Name) := do
-  if args.replacements.isEmpty then return {} else
-    let mut r : NameMap Name := {}
-    for file in args.replacements do
-      let { replacements .. } ← file.readJson EditsRecord
-      r := r.union replacements
-    return r
+  args.readState {} (·.union)
 
 end Skimmer
 
@@ -153,11 +185,13 @@ namespace Lake.Module
 open Skimmer
 
 -- don't need to create parent dirs, taken care of at write time
-def mkRefactorArgs (mod : Lake.Module) (replacements : Array System.FilePath) (preview := false) :
+def mkRefactorArgs (facetName : Name) (mod : Lake.Module) (importArts : Array System.FilePath)
+    (preview := false) :
     RefactorArgs where
+  name := facetName
   mod := { name := mod.name, leanFile := mod.leanFile }
   buildFile := mod.skimmerEditsRecord
-  replacements
+  importArts
   preview
 
 end Lake.Module
