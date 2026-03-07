@@ -104,70 +104,101 @@ open Skimmer
 
 -- Is this the right way to do things, or should we be computing the `EditsArtifact`?
 
-
--- (What not to do) what if we returned the metadata and sent it back along stdout? Then made it a facet value?
--- I suppose the issue is that it is no longer an artifact we can read. We have to run the lake facet to get it.
-public def refactor (args : RefactorArgs) : IO Unit := do
+@[inline] def Skimmer.RefactorArgs.init (args : RefactorArgs) :
+    IO (Parser.InputContext × ImportsSetup × Language.Lean.InitialSnapshot) := do
   initSearchPath (← findSysroot)
   let source ← IO.FS.readFile args.mod.leanFile
   let inputCtx := Parser.mkInputContext source args.mod.name.toString -- TODO check if correct
   let (setup, snap) ← Skimmer.runFrontend inputCtx { mainModuleName := args.mod.name }
   -- IO.println setup.result!.get.imports
-  let some { headerParserState, headerState, commands } := snap.toCommandSnaps
-    | IO.eprintln "Could not find snaps."
-  let some r := setup.result?.get | IO.eprintln "Could not find setup."
-    -- turn imports into skimmer build filepaths (do it the basic way for now)
-  -- spawn a `lake exe working` on them if they don't exist (lake will do this in the future)
-  -- read into `replacements`.
-  -- IO.println s!"{repr r.stx.raw.getRangeWithTrailing?}; {headerParserState.pos}"
-  let mut replacements : NameMap Name ← args.readReplacements
+  let some setup := setup.result?.get | throw <| .userError "Could not find setup."
+  return (inputCtx, setup, snap)
+
+@[inline] def Lean.Language.Lean.InitialSnapshot.getCommandSnaps (snap : Language.Lean.InitialSnapshot) :
+    IO Language.Lean.CommandSnaps := do
+  snap.toCommandSnaps.getDM (throw <| .userError "Could not find snaps.")
+
+def Skimmer.Edit.postprocess (newImportPosition : String.Pos.Raw) (edits : Array Edit) :
+    Array Edit := Id.run do
+  let edits :=
+    if edits.any (·.shouldReview?.isSome) then
+      edits.push ⟨newImportPosition.rangeAt, "\nimport Skimmer.Working.Review\n\n", none⟩
+    else edits
+  return edits.qsortOrd
+
+def runRefactorWithState {α} (init : α)
+    (inputCtx : Parser.InputContext)
+    (commands : Array Language.Lean.CommandParsedSnapshot)
+    (newImportPosition : String.Pos.Raw)
+    (f : α → Array Edit → Syntax → CommandElabM (α × Array Edit)) : IO (α × Array Edit) := do
+  let mut s := init
   let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
   for snap in commands do
-    -- TODO: none of these capture the error where the date and identifier are flipped. What does?
-    -- if snap.isFatal then
-    --   IO.eprintln s!"Fatal snap {snap.isFatal}"
-    -- if snap.parserState.recovering then
-    --   IO.eprintln s!"Parser recovering" -- not convinced this will ever be populated
-    -- if snap.getState.messages.hasErrors then
-    --   IO.eprintln s!"Errors:\n{← snap.getState.messages.toArray.mapM (·.toString)}"
-    -- TODO: could be useful to run in new state, but this is really a subprocess-version problem.
-    -- IO.println s!"++++\nrunning snap at '{snap.getSyntax.reprint!.take 30}...'"
-    match ← snap.runCommandElabM' inputCtx <| refactorDeprecated.post replacements edits with
+    match ← snap.runCommandElabM' inputCtx <| f s edits with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
-    | .ok (replacements', edits') =>
-      replacements := replacements'
+    | .ok (s', edits') =>
+      s := s'
       edits := edits'
-    -- IO.println s!"edits: {repr edits}\n{snap.getSyntax.reprint.getD "couldn't reprint"}"
-  -- finally write olean.skimmed. don't bother with error handling yet
-  -- TODO standardize edits postprocessing as part of what "edits" are. this should be an extensible part of introducing accumulation
-  if edits.any (·.shouldReview?.isSome) then
-    edits := edits.push ⟨headerParserState.pos.rangeAt, "\nimport Skimmer.Working.Review\n\n", none⟩
-  -- IO.println (edits.map (repr ·.range))
-  edits := edits.qsortOrd
-  let mdata : EditMData := {
+  return (s, Edit.postprocess newImportPosition edits)
+
+def runRefactor
+    (inputCtx : Parser.InputContext)
+    (commands : Array Language.Lean.CommandParsedSnapshot)
+    (newImportPosition : String.Pos.Raw)
+    (f : Array Edit → Syntax → CommandElabM (Array Edit)) : IO (Array Edit) := do
+  let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
+  for snap in commands do
+    match ← snap.runCommandElabM' inputCtx <| f edits with
+    | .error ex => IO.eprintln (← ex.toMessageData.toString)
+    | .ok edits' => edits := edits'
+  return Edit.postprocess newImportPosition edits
+
+def Skimmer.EditsRecordWithState.ofEdits
+    (source : String) (state : α) (edits : Array Edit) (preview := false):
+    EditsRecordWithState α where
+  mdata := {
     numEdits := edits.size
-    numReviews := edits.countP (·.shouldReview?.isSome)
-    modules := #[args.mod.name]
-    }
-  -- IO.println s!"====\nedits: {← (toMessageData edits).toString}"
-  -- -- IO.println s!"====\n{sourceFileDummy.applyEdits edits}"
+    numReviews := edits.countP (·.shouldReview?.isSome) }
+  edits
+  state
+  preview := if preview then some (source.applyEdits edits) else none
 
-  -- IO.println s!"====\n{source.applyEdits edits}"
+def Skimmer.EditsRecord.ofEdits
+    (source : String) (edits : Array Edit) (preview := false) :
+    EditsRecord where
+  mdata := {
+    numEdits := edits.size
+    numReviews := edits.countP (·.shouldReview?.isSome) }
+  edits
+  preview := if preview then some (source.applyEdits edits) else none
 
-  -- replaceDeprecated (r : NameMap Name) (e : Array String) :=
-  --   return (r, e.push s!"another! (foo exists: {(← getEnv).find? `foo |>.isSome})")
-  -- TODO: store replacements in build file for extra things
-  -- IO.FS. mod.jsonSkimmerFile
+def Skimmer.RefactorArgs.writeEditsRecordWithState (args : RefactorArgs)
+    (source : String) (state : α) (edits : Array Edit) :
+    IO Unit := do
+  EditsRecordWithState.ofEdits source state edits args.preview |>.write args.buildFile
 
-  -- discard <| art.write edits replacements mdata source
+def Skimmer.RefactorArgs.writeEditsRecord (args : RefactorArgs)
+    (source : String) (edits : Array Edit) :
+    IO Unit := do
+  EditsRecord.ofEdits source edits args.preview |>.write args.buildFile
 
-  let editsRecord : EditsRecord := {
-    mdata,
-    edits,
-    replacements,
-    preview := if args.preview then some (source.applyEdits edits) else none
-  }
-  editsRecord.write args.buildFile
+-- (What not to do) what if we returned the metadata and sent it back along stdout? Then made it a facet value?
+-- I suppose the issue is that it is no longer an artifact we can read. We have to run the lake facet to get it.
+public def refactorWithState (args : RefactorArgs) (init : α)
+    (f : α → Array Edit → Syntax → CommandElabM (α × Array Edit)) : IO Unit := do
+  initSearchPath (← findSysroot)
+  let (inputCtx, _, snap) ← args.init
+  let { headerParserState, commands .. } ← snap.getCommandSnaps
+  let (state, edits) ← runRefactorWithState init inputCtx commands headerParserState.pos f
+  args.writeEditsRecordWithState inputCtx.inputString state edits
+
+public def refactor (args : RefactorArgs)
+    (f : Array Edit → Syntax → CommandElabM (Array Edit)) : IO Unit := do
+  initSearchPath (← findSysroot)
+  let (inputCtx, _, snap) ← args.init
+  let { headerParserState, commands .. } ← snap.getCommandSnaps
+  let edits ← runRefactor inputCtx commands headerParserState.pos f
+  args.writeEditsRecord inputCtx.inputString edits
 
 /-
 Rewrite write-edits:
