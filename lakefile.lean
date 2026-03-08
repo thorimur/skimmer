@@ -32,8 +32,13 @@ require "leanprover-community" / batteries @ git "main"
   root := `Skimmer.Execute
   leanOptions := #[⟨`experimental.module, true⟩]
 
-@[default_target] lean_exe working where
-  root := `Skimmer.Working.Main
+@[default_target] lean_exe refactorDeprecated where
+  root := `Skimmer.Working.RefactorDeprecated
+  supportInterpreter := true
+  leanOptions := #[⟨`experimental.module, true⟩]
+
+@[default_target] lean_exe applyTryThis where
+  root := `Skimmer.Working.ApplyTryThis
   supportInterpreter := true
   leanOptions := #[⟨`experimental.module, true⟩]
 
@@ -245,7 +250,7 @@ module_facet recordRefactors (mod) : System.FilePath := do
       (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
         let args := mod.mkRefactorArgs `recordRefactors replacementPaths
         discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-          discard <| captureProc <|← Lake.exeSpawnArgs `working #[(toJson args).compress]
+          discard <| captureProc <|← Lake.exeSpawnArgs `refactorDeprecated #[(toJson args).compress]
         return args.buildFile -- TODO: correct?
 
 open Skimmer
@@ -312,16 +317,80 @@ package_facet applyRefactors (pkg) : Array System.FilePath := do
           modset := modset.insert mod
     return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
 
--- module_facet pickleJar (mod : Module) : Unit := do
---   recFetchShadowingBuildWhere mod `pickleJar (filter := some (·.inRootPackage)) fun _ mods _ => do
---     IO.println s!"{mod}: {← mods.mapM fun mod => return (mod, ← mod.inRootPackage)}"
---     return Job.pure ()
-  -- let job ← mod.importArts.fetch
-  -- job.mapM fun a => IO.println s!"{a.importArts.toArray.map fun (a, b) => a}"
-  -- let job ← mod.imports.fetch
-  -- job.mapM fun is => do
-  --   for i in is do
+module_facet recordTryThisRefactors (mod) : System.FilePath := do
+  (← mod.leanArts.fetch).mapM fun _ => do -- mix lean file into trace
+    let args := mod.mkRefactorArgs `recordTryThisRefactors #[]
+    discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+      discard <| captureProc <|← Lake.exeSpawnArgs `applyTryThis #[(toJson args).compress]
+    return args.buildFile -- TODO: correct?
 
-  -- let job ← mod.transImports.fetch
+library_facet recordTryThisRefactors (lib) : System.FilePath := do
+  (← lib.modules.fetch).bindM fun mods => do
+    let buildFiles := Job.collectArray <|← mods.mapM fun mod =>
+      fetch <| mod.facet `recordTryThisRefactors
+    buildFiles.mapM fun buildFiles => do
+      let file := lib.skimmerFilePath "editmdata_trythis" "json"
+      discard <| buildArtifactUnlessUpToDate file do
+        file.writeJson (mkGlobalEditMData buildFiles mods)
+      return file
 
-  -- job.mapM fun j => IO.println s!"{j}"
+package_facet recordTryThisRefactors (pkg) : System.FilePath := do
+  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+  aamods.bindM fun aamods => do
+    -- TODO: abstract out into package_facet modules
+    let mut modset : ModuleSet := {}
+    let mut mods := #[]
+    for amods in aamods do
+      for mod in amods do
+        unless modset.contains mod do
+          mods := mods.push mod
+          modset := modset.insert mod
+    let buildFiles := Job.collectArray <|← mods.mapM fun mod =>
+      fetch <| mod.facet `recordTryThisRefactors
+    buildFiles.mapM fun buildFiles => do
+      let file := pkg.skimmerFilePath "editmdata_trythis" "json"
+      discard <| buildArtifactUnlessUpToDate file do
+        file.writeJson (mkGlobalEditMData buildFiles mods)
+      return file
+
+module_facet applyTryThis (mod) : System.FilePath := do
+  -- Note: this only works by relying on `buildArtifactUnlessUpToDate`.
+  -- We do check things twice, which is unfortunate, but no big deal.
+  let recordPath ← fetch <| mod.facet `recordTryThisRefactors
+  recordPath.mapM fun recordPath => do
+    -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
+    let edits ← EditsRecord.readEdits recordPath
+    unless edits.isEmpty do
+      -- TODO: lock file?
+      let src ← IO.FS.readFile mod.leanFile
+      IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+    return recordPath
+
+def applyTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) := do
+  let job := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordTryThisRefactors
+  job.mapM fun recordPaths => do
+    let mut acc := #[]
+    for mod in mods, recordPath in recordPaths do
+      let { mdata, edits, .. } ← recordPath.readJson EditsRecord
+      unless edits.isEmpty do
+        -- TODO: lock file?
+        let src ← IO.FS.readFile mod.leanFile
+        IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+        acc := acc.push (mod.name, mdata.numEdits)
+    return acc
+
+library_facet applyTryThis (lib) : Array (Name × Nat) := do
+  (← lib.modules.fetch).bindM fun mods => applyTryThisAux mods
+
+package_facet applyTryThis (pkg) : Array (Name × Nat) := do
+  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+  aamods.bindM fun aamods => do
+    -- TODO: abstract out into package_facet modules
+    let mut modset : ModuleSet := {}
+    let mut mods := #[]
+    for amods in aamods do
+      for mod in amods do
+        unless modset.contains mod do
+          mods := mods.push mod
+          modset := modset.insert mod
+    applyTryThisAux mods

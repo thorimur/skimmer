@@ -6,12 +6,8 @@ Authors: Thomas R. Murrills
 module
 
 public import Skimmer.Working.Cruft
-public import Skimmer.Refactor.Util.Ident
 public import Skimmer.Refactor.Edit
 public import Skimmer.Refactor.Lake
-public import Lake
-import Lake.Load.Config
-public import Lake.Load.Workspace
 
 open Lean Elab Command
 
@@ -39,6 +35,7 @@ def toCommandCtx (ictx : Parser.InputContext) (snap : CommandParsedSnapshot) : C
 variable (x : EIO Exception Bool)
 
 -- TODO: should build on top of this to grab messages and such, I think that's what runAndReport does? would runAndReport fill in syntax/pos?
+
 
 def EIO.runCommandElabM (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : EIO Exception (α × State) := do
@@ -126,32 +123,33 @@ def Skimmer.Edit.postprocess (newImportPosition : String.Pos.Raw) (edits : Array
     else edits
   return edits.qsortOrd
 
-def runRefactorWithState {α} (init : α)
+-- performance?
+def runRefactor₂ {α} {β}
     (inputCtx : Parser.InputContext)
     (commands : Array Language.Lean.CommandParsedSnapshot)
-    (newImportPosition : String.Pos.Raw)
-    (f : α → Array Edit → Syntax → CommandElabM (α × Array Edit)) : IO (α × Array Edit) := do
-  let mut s := init
-  let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
+    (init : α) (init' : β)
+    (f : α → β → Syntax → CommandElabM (α × β)) : IO (α × β) := do
+  let mut a : α := init
+  let mut b : β := init'
   for snap in commands do
-    match ← snap.runCommandElabM' inputCtx <| f s edits with
+    match ← snap.runCommandElabM' inputCtx <| f a b with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
-    | .ok (s', edits') =>
-      s := s'
-      edits := edits'
-  return (s, Edit.postprocess newImportPosition edits)
+    | .ok (a', b') => a := a'; b := b'
+  return (a, b)
+
+-- TODO: we can do this async
 
 def runRefactor
     (inputCtx : Parser.InputContext)
     (commands : Array Language.Lean.CommandParsedSnapshot)
-    (newImportPosition : String.Pos.Raw)
-    (f : Array Edit → Syntax → CommandElabM (Array Edit)) : IO (Array Edit) := do
-  let mut edits : Array Edit := #[] -- import actual `Edit` functionality here
+    (init : α)
+    (f : α → Syntax → CommandElabM α) : IO α := do
+  let mut a : α := init -- import actual `Edit` functionality here
   for snap in commands do
-    match ← snap.runCommandElabM' inputCtx <| f edits with
+    match ← snap.runCommandElabM' inputCtx <| f a with
     | .error ex => IO.eprintln (← ex.toMessageData.toString)
-    | .ok edits' => edits := edits'
-  return Edit.postprocess newImportPosition edits
+    | .ok a' => a := a'
+  return a
 
 def Skimmer.EditsRecordWithState.ofEdits
     (source : String) (state : α) (edits : Array Edit) (preview := false):
@@ -189,38 +187,30 @@ public def refactorWithState (args : RefactorArgs) (init : α)
   initSearchPath (← findSysroot)
   let (inputCtx, _, snap) ← args.init
   let { headerParserState, commands .. } ← snap.getCommandSnaps
-  let (state, edits) ← runRefactorWithState init inputCtx commands headerParserState.pos f
-  args.writeEditsRecordWithState inputCtx.inputString state edits
+  let (state, edits) ← runRefactor₂ inputCtx commands init #[] f
+  args.writeEditsRecordWithState inputCtx.inputString state <|
+    Edit.postprocess headerParserState.pos edits
 
 public def refactor (args : RefactorArgs)
     (f : Array Edit → Syntax → CommandElabM (Array Edit)) : IO Unit := do
   initSearchPath (← findSysroot)
   let (inputCtx, _, snap) ← args.init
   let { headerParserState, commands .. } ← snap.getCommandSnaps
-  let edits ← runRefactor inputCtx commands headerParserState.pos f
+  let edits := Edit.postprocess headerParserState.pos <|← runRefactor inputCtx commands #[] f
   args.writeEditsRecord inputCtx.inputString edits
 
-/-
-Rewrite write-edits:
-
-possibly just get json. otherwise
-
-get module, modules, etc. Assume we have olean
-
-rewrite `importModules` for `importSkimmerModules` or something? not clear when this should and shouldn't follow regular imports?
-
-in any case just assume we have the olean paths. this is a lake thing so let's cruft it. `ls` maybe and just read every olean.skimmed lol. Still requires `readModuleData` or something.
-
-though...these would normally be in environment extensions which require subprocesses to set up...so...
-
-let's just use json for everything right now?
-
-ToJson, FromJson, and after FromJson, write as usual using paths.
-
-
--/
--- currently we expect the module to be fed a single `RefactorArgs`
-public def main (args : List String) : IO Unit := do
+public nonrec def IO.Main.refactorWithState {α} (args : List String) (init : RefactorArgs → IO α)
+  (f : α → Array Edit → Syntax → CommandElabM (α × Array Edit)) : IO Unit :=
   match args with
-  | [refactorArgs] => do refactor (← .ofExcept refactorArgs.readJson?)
+  | [refactorArgs] => do
+    let args ← .ofExcept refactorArgs.readJson?
+    refactorWithState args (← init args) f
+  | _ => throw (.userError "Expected json for refactor args")
+
+public nonrec def IO.Main.refactor (args : List String)
+  (f : Array Edit → Syntax → CommandElabM (Array Edit)) : IO Unit :=
+  match args with
+  | [refactorArgs] => do
+    let args ← .ofExcept refactorArgs.readJson?
+    refactor args f
   | _ => throw (.userError "Expected json for refactor args")

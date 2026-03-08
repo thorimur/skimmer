@@ -1,3 +1,8 @@
+/-
+Copyright (c) 2026 Thomas R. Murrills. All rights reserved.
+Released under Apache 2.0 license as described in the file LICENSE.
+Authors: Thomas R. Murrills
+-/
 module
 
 import Lean
@@ -172,8 +177,16 @@ protected def runFrontend
 
 end Skimmer
 
+namespace Lean
+
+-- from `runAndCollectMessages`
+-- TODO: should we clear snapshotTasks as it does?
+def waitForAllMessages : CommandElabM MessageLog :=
+  return (← get).messages ++
+    (← get).snapshotTasks.foldl (· ++ ·.get.getAll.foldl (· ++ ·.diagnostics.msgLog) .empty) .empty
+
 /-- Gets the syntax of the top-level node, assuming there is one. -/
-partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
+partial def Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
   match t with
   | .node i _    => i.stx
   | .context _ t => t.getSyntax?
@@ -182,7 +195,7 @@ partial def Lean.Elab.InfoTree.getSyntax? (t : InfoTree) : Option Syntax :=
 -- <restore> #check PartialContextInfo
 
 /-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
-partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
+partial def Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
   match t with
   | .node i _    => i.stx
   | .context _ t => t.getSyntax
@@ -198,7 +211,7 @@ partial def Lean.Elab.InfoTree.getSyntax (t : InfoTree) : Syntax :=
 --   | .context _ t => t.getEnvBefore? -- shouldn't happen?
 --   | .hole _      => none
 
-partial def Lean.Elab.InfoTree.getEnv? (t : InfoTree) : Option Environment :=
+partial def Elab.InfoTree.getEnv? (t : InfoTree) : Option Environment :=
   match t with
   | .node _ ts    => ts.findSome? (·.getEnv?) --bad?
   | .context (.commandCtx info) _ => info.env
@@ -206,14 +219,14 @@ partial def Lean.Elab.InfoTree.getEnv? (t : InfoTree) : Option Environment :=
   | .hole _      => none
 
 /-- Gets the syntax of the top-level node, or returns `.missing` if there isn't one. -/
-partial def Lean.Elab.InfoTree.getEnvAfter? (t : InfoTree) : Option Environment :=
+partial def Elab.InfoTree.getEnvAfter? (t : InfoTree) : Option Environment :=
   match t with
   | .node _ ts    => ts.findSome? (·.getEnvAfter?) --bad?
   | .context (.commandCtx info) _ => info.cmdEnv?
   | .context _ t => t.getEnvAfter? -- shouldn't happen?
   | .hole _      => none
 
-namespace Lean.Language.Lean
+namespace Language.Lean
 
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
 -- TODO: why not `elabSnap.infoTree?`?
@@ -249,7 +262,6 @@ def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.Stat
         | none => {} }
   { cmdState with infoState := infoState.substituteLazy.get }
       -- TODO: holes? do we need to substitutelazy or anything? what about the other infostate things? really confused by this cmdState.
-
 
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
 -- TODO: why not `elabSnap.infoTree?`?
