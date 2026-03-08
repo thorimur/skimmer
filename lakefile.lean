@@ -32,12 +32,12 @@ require "leanprover-community" / batteries @ git "main"
   root := `Skimmer.Execute
   leanOptions := #[⟨`experimental.module, true⟩]
 
-@[default_target] lean_exe refactorDeprecated where
+@[default_target] lean_exe refactorDeprecatedExe where
   root := `Skimmer.Working.RefactorDeprecated
   supportInterpreter := true
   leanOptions := #[⟨`experimental.module, true⟩]
 
-@[default_target] lean_exe applyTryThis where
+@[default_target] lean_exe applyTryThisExe where
   root := `Skimmer.Working.ApplyTryThis
   supportInterpreter := true
   leanOptions := #[⟨`experimental.module, true⟩]
@@ -250,7 +250,7 @@ module_facet recordRefactors (mod) : System.FilePath := do
       (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
         let args := mod.mkRefactorArgs `recordRefactors replacementPaths
         discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-          discard <| captureProc <|← Lake.exeSpawnArgs `refactorDeprecated #[(toJson args).compress]
+          discard <| captureProc <|← Lake.exeSpawnArgs `refactorDeprecatedExe #[(toJson args).compress]
         return args.buildFile -- TODO: correct?
 
 open Skimmer
@@ -321,7 +321,7 @@ module_facet recordTryThisRefactors (mod) : System.FilePath := do
   (← mod.leanArts.fetch).mapM fun _ => do -- mix lean file into trace
     let args := mod.mkRefactorArgs `recordTryThisRefactors #[]
     discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-      discard <| captureProc <|← Lake.exeSpawnArgs `applyTryThis #[(toJson args).compress]
+      discard <| captureProc <|← Lake.exeSpawnArgs `applyTryThisExe #[(toJson args).compress]
     return args.buildFile -- TODO: correct?
 
 library_facet recordTryThisRefactors (lib) : System.FilePath := do
@@ -354,8 +354,6 @@ package_facet recordTryThisRefactors (pkg) : System.FilePath := do
       return file
 
 module_facet applyTryThis (mod) : System.FilePath := do
-  -- Note: this only works by relying on `buildArtifactUnlessUpToDate`.
-  -- We do check things twice, which is unfortunate, but no big deal.
   let recordPath ← fetch <| mod.facet `recordTryThisRefactors
   recordPath.mapM fun recordPath => do
     -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
