@@ -193,7 +193,6 @@ script checkTarget (args) do
   discard <| parseTargetSpecs (← getWorkspace) args |>.toIO fun cliError => cliError.toString
   IO.Process.exit 0
 
-
 -- TODO: we may want instead to stick to general `FetchM` functions.
 
 /-- This fetches `facetName` for every import satisfying `filter`, then runs `shadow` on the result, passing in the modules satisfying filter and the setup.
@@ -237,6 +236,111 @@ def Lake.Module.inRootPackage.{u} {m : Type → Type u} [Monad m] [MonadWorkspac
     (mod : Module) : m Bool :=
   return (← getRootPackage) == mod.pkg
 
+/-
+What does lake need to know? It needs to know
+(1) the name.
+(2) the output type; we can standardize this, probably.
+(3) what should be mixed into traces
+
+
+Possibly, multiple refactors should be temporarily registered in lake as some single combo facet? Not clear. Possibly we want to aggregate all edit mdatas.
+
+We want a way of registering a refactor that somehow aggregates the mdata...
+
+We also want the mdata aggregated in advance into a single file, unlike now.
+
+Also not sure how competing refactors should work. One at a time?
+-/
+
+
+private def getEscapedNameParts? (acc : List String) : Name → Option (List String)
+  | Name.anonymous => if acc.isEmpty then none else some acc
+  | Name.str n s => do
+    let s ← Name.escapePart s
+    getEscapedNameParts? (s::acc) n
+  | Name.num _ _ => none
+
+def mkNameLit? (n : Ident) : Option NameLit :=
+  let info := n.raw.getInfo?.getD .none
+  getEscapedNameParts? [] n.getId  |>.map fun ss =>
+    Syntax.mkNameLit ("`" ++ ".".intercalate ss) info
+
+-- TODO: noramlize for filepaths
+def mkSkimmerMDataFileName (facetName : Name) := s!"editsmdata_{facetName}"
+
+/-- A temporary affordance to allow producing multiple facets. In the future, this will be subsumed
+by driving lake builds. Note that this version means that each build job runs totally
+indepdendently. -/
+macro "refactor_facets" facetNames:ident+ : command => do
+  let cmds ← facetNames.flatMapM fun facetName => do
+    let some nameLit := mkNameLit? facetName | Macro.throwUnsupported
+    return #[
+      ← `(command|
+        module_facet $facetName:ident (mod) : System.FilePath := do
+          recFetchFacetShadowingBuildWhere mod $nameLit
+            (filter := some fun i => return i.pkg == mod.pkg)
+            fun _ _ importArts => do
+              (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
+                let args := mod.mkRefactorArgs $nameLit importArts
+                discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+                  discard <| captureProc <|← Lake.fetchExeSpawnArgs `working #[args.json.compress]
+                return args.buildFile -- TODO: correct?
+      ),
+      ← `(command|
+        library_facet $facetName:ident (lib) : System.FilePath := do
+          (← lib.modules.fetch).bindM fun mods => do
+            let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet $nameLit
+            buildFiles.mapM fun buildFiles => do
+              let file := lib.skimmerFilePath (mkSkimmerMDataFileName $nameLit) "json"
+              discard <| buildArtifactUnlessUpToDate file do
+                file.writeJson (lib.mkSkimmerMData $nameLit buildFiles mods)
+              return file
+      ),
+      ← `(command|
+        package_facet $facetName:ident (pkg) : System.FilePath := do
+          let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+          aamods.bindM fun aamods => do
+            -- TODO: abstract out into package_facet modules
+            let mut modset : ModuleSet := {}
+            let mut mods := #[]
+            for amods in aamods do
+              for mod in amods do
+                unless modset.contains mod do
+                  mods := mods.push mod
+                  modset := modset.insert mod
+            let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet $nameLit
+            buildFiles.mapM fun buildFiles => do
+              let file := pkg.skimmerFilePath (mkSkimmerMDataFileName $nameLit) "json"
+              discard <| buildArtifactUnlessUpToDate file do
+                file.writeJson (pkg.mkSkimmerMData $nameLit buildFiles mods)
+              return file
+      )
+    ]
+  return ⟨mkNullNode cmds⟩
+
+/-- Gets a (deduplicated) array of modules in the package's libraries. -/
+package_facet libModules (pkg) : Array Module := do
+  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
+  aamods.mapM fun aamods => do
+    let mut modset : ModuleSet := {}
+    let mut mods := #[]
+    for amods in aamods do
+      for mod in amods do
+        unless modset.contains mod do
+          mods := mods.push mod
+          modset := modset.insert mod
+    return mods
+
+def Lake.Module.refactorWithExe (recordRefactorFacet refactorExe : Name)
+    (importArts : Array System.FilePath) (mod : Lake.Module) :
+    FetchM (Job System.FilePath) := do
+  (← mod.lean.fetch).bindM fun _ => do -- mix lean file into trace
+    let args := mod.mkRefactorArgs recordRefactorFacet importArts
+    (← fetchExeSpawnArgs refactorExe #[(toJson args).compress]).mapM fun spawnArgs => do
+      discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+        discard <| captureProc spawnArgs
+      return args.buildFile -- TODO: correct?
+
 -- TODO(NOW): create a standard `FetchM` wrapper for processes, passing them filepaths, and an `IO` wrapper for other `IO` actions which passes in filepaths appropriately...
 
 -- TODO(NOW): also read/write from these filepaths? use buildartifact unless up to date?
@@ -246,12 +350,8 @@ def Lake.Module.inRootPackage.{u} {m : Type → Type u} [Monad m] [MonadWorkspac
 module_facet recordRefactors (mod) : System.FilePath := do
   recFetchFacetShadowingBuildWhere mod `recordRefactors
     (filter := some fun i => return i.pkg == mod.pkg)
-    fun _ _ replacementPaths => do
-      (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
-        let args := mod.mkRefactorArgs `recordRefactors replacementPaths
-        discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-          discard <| captureProc <|← Lake.exeSpawnArgs `refactorDeprecatedExe #[(toJson args).compress]
-        return args.buildFile -- TODO: correct?
+    fun _ _ replacementPaths =>
+      mod.refactorWithExe `recordRefactors `refactorDeprecatedExe replacementPaths
 
 open Skimmer
 
@@ -265,16 +365,7 @@ library_facet recordRefactors (lib) : System.FilePath := do
       return file
 
 package_facet recordRefactors (pkg) : System.FilePath := do
-  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
-  aamods.bindM fun aamods => do
-    -- TODO: abstract out into package_facet modules
-    let mut modset : ModuleSet := {}
-    let mut mods := #[]
-    for amods in aamods do
-      for mod in amods do
-        unless modset.contains mod do
-          mods := mods.push mod
-          modset := modset.insert mod
+  (← fetch <| pkg.facet `libModules).bindM fun mods => do
     let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
     buildFiles.mapM fun buildFiles => do
       let file := pkg.skimmerFilePath "editmdata" "json"
@@ -296,6 +387,7 @@ module_facet applyRefactors (mod) : System.FilePath := do
     -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
     let edits ← EditsRecord.readEdits recordPath
     unless edits.isEmpty do
+      -- TODO: lock file?
       let src ← IO.FS.readFile mod.leanFile
       IO.FS.writeFile mod.leanFile <| src.applyEdits edits
     return recordPath
@@ -305,24 +397,13 @@ library_facet applyRefactors (lib) : Array System.FilePath := do
     return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
 
 package_facet applyRefactors (pkg) : Array System.FilePath := do
-  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
-  aamods.bindM fun aamods => do
-    -- TODO: abstract out into package_facet modules
-    let mut modset : ModuleSet := {}
-    let mut mods := #[]
-    for amods in aamods do
-      for mod in amods do
-        unless modset.contains mod do
-          mods := mods.push mod
-          modset := modset.insert mod
+  (← fetch <| pkg.facet `libModules).bindM fun mods =>
     return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
 
+-- TODO: ensure `leanArts` doesn't replay, there's no need for this
 module_facet recordTryThisRefactors (mod) : System.FilePath := do
-  (← mod.leanArts.fetch).mapM fun _ => do -- mix lean file into trace
-    let args := mod.mkRefactorArgs `recordTryThisRefactors #[]
-    discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-      discard <| captureProc <|← Lake.exeSpawnArgs `applyTryThisExe #[(toJson args).compress]
-    return args.buildFile -- TODO: correct?
+  (← mod.leanArts.fetch).bindM fun _ =>
+    mod.refactorWithExe `recordTryThisRefactors `applyTryThisExe #[]
 
 library_facet recordTryThisRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
@@ -335,16 +416,7 @@ library_facet recordTryThisRefactors (lib) : System.FilePath := do
       return file
 
 package_facet recordTryThisRefactors (pkg) : System.FilePath := do
-  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
-  aamods.bindM fun aamods => do
-    -- TODO: abstract out into package_facet modules
-    let mut modset : ModuleSet := {}
-    let mut mods := #[]
-    for amods in aamods do
-      for mod in amods do
-        unless modset.contains mod do
-          mods := mods.push mod
-          modset := modset.insert mod
+  (← fetch <| pkg.facet `libModules).bindM fun mods => do
     let buildFiles := Job.collectArray <|← mods.mapM fun mod =>
       fetch <| mod.facet `recordTryThisRefactors
     buildFiles.mapM fun buildFiles => do
@@ -353,10 +425,10 @@ package_facet recordTryThisRefactors (pkg) : System.FilePath := do
         file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
+-- Noninteractive for now; also records try this edits.
 module_facet applyTryThis (mod) : System.FilePath := do
   let recordPath ← fetch <| mod.facet `recordTryThisRefactors
   recordPath.mapM fun recordPath => do
-    -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
     let edits ← EditsRecord.readEdits recordPath
     unless edits.isEmpty do
       -- TODO: lock file?
@@ -378,17 +450,7 @@ def applyTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) 
     return acc
 
 library_facet applyTryThis (lib) : Array (Name × Nat) := do
-  (← lib.modules.fetch).bindM fun mods => applyTryThisAux mods
+  (← lib.modules.fetch).bindM (applyTryThisAux ·)
 
 package_facet applyTryThis (pkg) : Array (Name × Nat) := do
-  let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
-  aamods.bindM fun aamods => do
-    -- TODO: abstract out into package_facet modules
-    let mut modset : ModuleSet := {}
-    let mut mods := #[]
-    for amods in aamods do
-      for mod in amods do
-        unless modset.contains mod do
-          mods := mods.push mod
-          modset := modset.insert mod
-    applyTryThisAux mods
+  (← fetch <| pkg.facet `libModules).bindM (applyTryThisAux ·)

@@ -13,7 +13,7 @@ public def Lake.envSpawnArgs.{u} {m : Type → Type u} [MonadWorkspace m] [Monad
     (cmd : String) (args : Array String := #[]) :
     m IO.Process.SpawnArgs := return {cmd, args, env := ← getAugmentedEnv}
 
-/-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. -/
+/-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. Note that this does not alter the trace; see instead `fetchExeSpawnArgs` to mix the exe's trace into the current job. -/
 public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
     [MonadWorkspace m] [Monad m] [MonadLiftT IO m] [MonadError m]
     (name : Name) (args  : Array String := #[])
@@ -23,6 +23,14 @@ public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
     | error s!"unknown executable `{name}`"
   let exeFile ← ws.runBuild exe.fetch buildConfig
   Lake.envSpawnArgs exeFile.toString args
+
+/-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. -/
+public def Lake.fetchExeSpawnArgs
+    (name : Name) (args  : Array String := #[]) : FetchM (Job IO.Process.SpawnArgs) := do
+  let some exe := (← getWorkspace).findLeanExe? name
+    | error s!"unknown executable `{name}`"
+  (← exe.fetch).mapM (sync := true) fun exeFile =>
+    Lake.envSpawnArgs exeFile.toString args
 
 def Lake.Package.skimmerDir (pkg : Package) : System.FilePath :=
   pkg.buildDir / "skimmer"
