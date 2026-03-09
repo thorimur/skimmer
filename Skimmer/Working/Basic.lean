@@ -39,19 +39,19 @@ variable (x : EIO Exception Bool)
 
 def EIO.runCommandElabM (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : EIO Exception (α × State) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getState)
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getStateAfter)
 
 def EIO.runCommandElabM' (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : EIO Exception α := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getState)
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getStateAfter)
 
 def runCommandElabM (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : IO (Except Exception (α × State)) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getState) |>.toIO'
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run (snap.getStateAfter) |>.toIO'
 
 def runCommandElabM' (ictx : Parser.InputContext)
     (x : Syntax → CommandElabM α) (snap : CommandParsedSnapshot) : IO (Except Exception α) := do
-  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getState) |>.toIO'
+  x snap.getSyntax |>.run (snap.toCommandCtx ictx) |>.run' (snap.getStateAfter) |>.toIO'
 
 end Lean.Language.Lean.CommandParsedSnapshot
 

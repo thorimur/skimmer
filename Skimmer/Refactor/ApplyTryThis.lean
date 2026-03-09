@@ -46,7 +46,8 @@ def Lean.MessageData.getFirstTextSuggestion? (msg : MessageData) :
 -- Assumes you only want to apply the first edit per message.
 public def applyTryThis (edits : Array Edit) (_cmd : Syntax) : CommandElabM (Array Edit) := do
   let mut edits : Array Edit := edits
-  for msg in (← waitForAllMessages).reportedPlusUnreported do
+  -- Note: already has all messages in current setup. Subject to change.
+  for msg in (← get).messages.reportedPlusUnreported do
     let some (range, replacement) ← msg.data.getFirstTextSuggestion? | continue
     edits := edits.push { range := (← getFileMap).lspRangeToUtf8Range range, replacement }
   return edits

@@ -253,14 +253,20 @@ def CommandParsedSnapshot.getSyntax (snap : CommandParsedSnapshot) : Syntax :=
 /--
 Gets the command state *after* the command has been elaborated. However--no infotrees??
 
+TODO: aggregate messages/snapshots in a more principled way. Don't necessarily wait on them; just transfer the snapshot tasks to the command state to mimic elaboration.
+
 What is the relationship to (1) the infotree from `getInfoTree` (2) the diagnostic messages (3) the linter effect on messages? -/
-def CommandParsedSnapshot.getState (snap : CommandParsedSnapshot) : Command.State :=
+def CommandParsedSnapshot.getStateAfter (snap : CommandParsedSnapshot) : Command.State :=
   let cmdState := snap.elabSnap.resultSnap.get.cmdState
+  -- TODO: check this is right. Is there a better way?
+  let asyncMessages := snap.elabSnap.reportSnap.get.getAll.foldl (· ++ ·.diagnostics.msgLog) {}
   let infoState := { cmdState.infoState with
       trees := match snap.getInfoTree? with
         | some t => PersistentArray.empty.push t
         | none => {} }
-  { cmdState with infoState := infoState.substituteLazy.get }
+  { cmdState with
+    messages := cmdState.messages ++ asyncMessages
+    infoState := infoState.substituteLazy.get }
       -- TODO: holes? do we need to substitutelazy or anything? what about the other infostate things? really confused by this cmdState.
 
 /-- Convenience function; does it the way `IO.processCommandsIncrementally` does. Blocks. -/
