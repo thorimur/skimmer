@@ -11,56 +11,10 @@ require "leanprover-community" / batteries @ git "main"
 
 @[default_target] lean_lib Skimmer where leanOptions := #[⟨`experimental.module, true⟩]
 
--- @[default_target] lean_lib SkimmerPlugin where
---   globs := #[`SkimmerPlugin.+]
---   defaultFacets := #[`lean_lib.shared]
---   leanOptions := #[⟨`experimental.module, true⟩]
-
--- @[default_target] lean_lib SkimmerTest where
---   globs := #[`SkimmerTest.+]
---   leanOptions := #[⟨`experimental.module, true⟩]
-
--- @[default_target] lean_lib SkimmerExtra where
---   globs := #[`SkimmerExtra.+]
---   leanOptions := #[⟨`experimental.module, true⟩]
-
--- @[default_target] lean_lib SkimmerHub where
---   globs := #[`SkimmerExtra.+]
---   leanOptions := #[⟨`experimental.module, true⟩]
-
-@[default_target] lean_exe write_edits where
-  root := `Skimmer.Execute
-  leanOptions := #[⟨`experimental.module, true⟩]
-
-@[default_target] lean_exe refactorDeprecatedExe where
-  root := `Skimmer.Working.RefactorDeprecated
-  supportInterpreter := true
-  leanOptions := #[⟨`experimental.module, true⟩]
-
 @[default_target] lean_exe applyTryThisExe where
   root := `Skimmer.Working.ApplyTryThis
   supportInterpreter := true
   leanOptions := #[⟨`experimental.module, true⟩]
-
-lean_lib WorkingTest where
-  globs := #[`WorkingTest.+]
-  leanOptions := #[⟨`experimental.module, true⟩]
-
-section
-
-open Lean
-
-structure EditData where
-  edits : System.FilePath
-  mdata : System.FilePath
-  -- The following have to be pickled into the mdata, in order to cross the subprocess boundary
-  -- The artifact consists of both of these together, of course. Can we have subartifacts?
-  -- Further on we may want edits to be contributed to by multiple things; will we want to aggregate the mdata on the fly? Probably produce an aggregated mdata via pickle
-  -- uri : Lsp.DocumentUri
-  -- editLocs   : Array Lsp.Range
-  -- reviewLocs : Array Lsp.Range
-
-end
 
 open Lean hiding Module
 
@@ -209,27 +163,6 @@ end Inline
 
 inline_modules Skimmer.Refactor.Lake
 
--- TODO: write this to a json file somewhere
--- target workspace : Serialized.Workspace := do
---   let ws ← getWorkspace
---   return Job.pure ws.toSerializedWorkspace
-
-target facetNames : Array Name := do
-  let facetCfgs := (← getWorkspace).facetConfigs.toArray.map (·.fst)
-    |>.filter (!(`default).isSuffixOf ·)
-    |>.qsort (·.lt)
-  return Job.pure facetCfgs
-
-target libraries (pkg) : Array Name := do
-  return Job.pure <| pkg.leanLibs.map (·.name) |>.qsort Name.lt
-
-target targetNames (pkg) : Array Name := do
-  return Job.pure <| (pkg.targetDecls.map (·.name)).qsort Name.lt
-
-script checkTarget (args) do
-  discard <| parseTargetSpecs (← getWorkspace) args |>.toIO fun cliError => cliError.toString
-  IO.Process.exit 0
-
 -- TODO: we may want instead to stick to general `FetchM` functions.
 
 /-- This fetches `facetName` for every import satisfying `filter`, then runs `shadow` on the result, passing in the modules satisfying filter and the setup.
@@ -317,65 +250,7 @@ def Lake.Module.refactorWithExe
         discard <| captureProc spawnArgs
       return args.buildFile -- TODO: correct?
 
--- TODO(NOW): create a standard `FetchM` wrapper for processes, passing them filepaths, and an `IO` wrapper for other `IO` actions which passes in filepaths appropriately...
-
--- TODO(NOW): also read/write from these filepaths? use buildartifact unless up to date?
--- TODO(NOW): where does `buildArtifactUnlessUpToDate` come in?
-
--- TODO: would be much better if we could buildArtifactsUnlessUpToDate.
-module_facet recordRefactors (mod) : System.FilePath := do
-  recFetchFacetShadowingBuildWhere mod `recordRefactors
-    (filter := some fun i => return i.pkg == mod.pkg)
-    fun setupFile _ replacementPaths =>
-      mod.refactorWithExe `recordRefactors `refactorDeprecatedExe setupFile replacementPaths
-
 open Skimmer
-
-library_facet recordRefactors (lib) : System.FilePath := do
-  (← lib.modules.fetch).bindM fun mods => do
-    let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
-    buildFiles.mapM fun buildFiles => do
-      let file := lib.skimmerFilePath "editmdata" "json"
-      discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles mods)
-      return file
-
-package_facet recordRefactors (pkg) : System.FilePath := do
-  (← fetch <| pkg.facet `libModules).bindM fun mods => do
-    let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordRefactors
-    buildFiles.mapM fun buildFiles => do
-      let file := pkg.skimmerFilePath "editmdata" "json"
-      discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles mods)
-      return file
-
--- TODO: record the trace or hash in the recorded edits. Invalidate if it doesn't match the lean file hash.
--- TODO: better return value. Right now it returns the filepath. We may call out into something more interactive here.
-module_facet applyRefactors (mod) : System.FilePath := do
-  -- Note: this only works by relying on `buildArtifactUnlessUpToDate`.
-  -- We do check things twice, which is unfortunate, but no big deal.
-  let isUpToDate ← (← getWorkspace).checkNoBuild <| fetch <| mod.facet `recordRefactors
-  unless isUpToDate do
-    -- TODO: better error? should we error at all, or return something useful?
-    error s!"Recorded refactors for {mod} are not up-to-date."
-  let recordPath ← fetch <| mod.facet `recordRefactors
-  recordPath.mapM fun recordPath => do
-    -- TODO(NOW): we need to check if edits have been applied yet. Technically, this might happen while trying to fetch the recorded edits? Not clear.
-    let edits ← EditsRecord.readEdits recordPath
-    unless edits.isEmpty do
-      -- TODO: lock file?
-      let src ← IO.FS.readFile mod.leanFile
-      IO.FS.writeFile mod.leanFile <| src.applyEdits edits
-    return recordPath
-
-library_facet applyRefactors (lib) : Array System.FilePath := do
-  (← lib.modules.fetch).bindM fun mods => do
-    return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
-
-package_facet applyRefactors (pkg) : Array System.FilePath := do
-  (← fetch <| pkg.facet `libModules).bindM fun mods =>
-    return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
-
 
 -- TODO: check to make sure errors in leanArts make the whole thing fail?
 -- TODO: does this handle traces correctly?
