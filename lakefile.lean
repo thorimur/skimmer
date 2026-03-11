@@ -7,9 +7,10 @@ open Lake DSL
 
 package skimmer where version := v!"0.1.0"
 
-require "leanprover-community" / batteries @ git "main"
+-- require "leanprover-community" / batteries @ git "main"
 
-@[default_target] lean_lib Skimmer where leanOptions := #[⟨`experimental.module, true⟩]
+@[default_target] lean_lib Skimmer where
+  leanOptions := #[⟨`experimental.module, true⟩]
 
 @[default_target] lean_exe applyTryThisExe where
   root := `Skimmer.Working.ApplyTryThis
