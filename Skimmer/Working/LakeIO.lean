@@ -8,7 +8,7 @@ module
 public import Lean
 public import Skimmer.Refactor.Lake
 public import Lake
-public import Skimmer.LakeSerialized
+-- public import Skimmer.Working.LakeSerialized
 
 open Lean Meta Elab Lake
 
@@ -70,5 +70,5 @@ def runScript (script : String) (args : Array String := #[]) : IO String := do
 def checkTarget (key : Array PartialBuildKey) : IO Unit := do
   discard <| runScript "checkTarget" (key.map (·.toString))
 
-def getSerializedWorkspace : IO Serialized.Workspace :=
-  query (.customTarget `workspace) Serialized.Workspace
+-- def getSerializedWorkspace : IO Serialized.Workspace :=
+--   query (.customTarget `workspace) Serialized.Workspace
