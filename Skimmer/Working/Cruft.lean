@@ -92,19 +92,19 @@ structure ImportsSetup extends SetupImportsResult where
   stx : HeaderSyntax
 deriving Repr, Inhabited
 
-/-- Facts about the module that are inferred external to the module itself -/
-structure ModuleSetupExternal where
-  /-- The name of the module. -/
-  mainModuleName : Name
-  trustLevel : UInt32 := 0
-  /-- The package to which the module belongs (if any). -/
-  package? : Option PkgId := none
-  /-- Dynamic libraries to load with the module. -/
-  dynlibs : Array System.FilePath := #[]
-  /-- Plugins to initialize with the module. -/
-  plugins : Array System.FilePath := #[]
-  /-- Additional options for the module. -/
-  options : LeanOptions := {}
+-- /-- Facts about the module that are inferred external to the module itself. A substructure of `ModuleSetup`. -/
+-- structure ModuleSetupExternal where
+--   /-- The name of the module. -/
+--   mainModuleName : Name
+--   trustLevel : UInt32 := 0
+--   /-- The package to which the module belongs (if any). -/
+--   package? : Option PkgId := none
+--   /-- Dynamic libraries to load with the module. -/
+--   dynlibs : Array System.FilePath := #[]
+--   /-- Plugins to initialize with the module. -/
+--   plugins : Array System.FilePath := #[]
+--   /-- Additional options for the module. -/
+--   options : LeanOptions := {}
   -- TODO: not clear to me if imports and import artifacts should be here? does lake also provide these prior to the processing of the file somehow?
 
 -- /-- Deliberate changes we may want to make to the module setup. We go field by field to allow them to be more easily altered independently... actually, no, they may need to interfere, right? -/
@@ -123,6 +123,7 @@ structure ModuleSetupExternal where
 
 /-- The same as `runFrontEnd`, but
 1. stores the `SetupImportsResult` in a promise to grab it later (sigh, wish it was in a snap)
+    The issue is that we compute it inside `process` with `setup stx`, not here. And then have no way of passing it back.
     TODO: is there a better way?
 2. stops after producing the snapshot tree
 3. does not time
@@ -133,7 +134,8 @@ protected def runFrontend
     -- (input : String)
     -- (fileName : String)
     (inputCtx : Parser.InputContext)
-    (moduleSetup : ModuleSetupExternal) -- subsumes mainModuleName + some of setup?
+    (setupFile : System.FilePath)
+    -- (moduleSetup : ModuleSetupExternal) -- subsumes mainModuleName + some of setup?
     -- (oleanFileName? : Option System.FilePath := none)
     -- (ileanFileName? : Option System.FilePath := none)
     -- (jsonOutput : Bool := false)
@@ -142,31 +144,35 @@ protected def runFrontend
     -- TODO: not sure if a big old function here is necessary or performant, but it is versatile
     (setupChanges? : Option (SetupImportsResult → ProcessingT IO SetupImportsResult) := none)
     (old? : Option InitialSnapshot := none)
+    (trustLevel : UInt32 := 0)
     : IO (IO.Promise ImportsSetup × InitialSnapshot) := do
   -- let startTime := (← IO.monoNanosNow).toFloat / 1000000000
-  -- let inputCtx := Parser.mkInputContext input fileName
-  let opts := Lean.internal.cmdlineSnapshots.set moduleSetup.options.toOptions true
+  let setup ← ModuleSetup.load setupFile
+  -- TODO: in the canonical frontend, these options come from `ShellOptions`, which in turn are parsed from arguments passed across the subprocess boundary by `Module.buildLean` and `compileLeanModule`—`mod.weakLeanArgs ++ mod.leanArgs`, at least, it seems. Not clear to me how much redundancy there is. We would then merge them into the setup options.
+  let opts := setup.options.toOptions
+  let opts := Lean.internal.cmdlineSnapshots.setIfNotSet opts true
   -- default to async elaboration; see also `Elab.async` docs
   let opts := Elab.async.setIfNotSet opts true
   let ctx := { inputCtx with }
   let setupProm : IO.Promise ImportsSetup ← IO.Promise.new
   let setup stx := do
-    -- change begin
+    liftM <| setup.dynlibs.forM Lean.loadDynlib
     let mut setup : SetupImportsResult := {
-          trustLevel := moduleSetup.trustLevel
-          package? := moduleSetup.package?
-          mainModuleName := moduleSetup.mainModuleName
-          isModule := stx.isModule
-          imports := stx.imports
-          -- importArts? should we include in external?
-          plugins := moduleSetup.plugins
-          opts
-        }
+      trustLevel
+      package? := setup.package?
+      mainModuleName := setup.name
+      isModule := strictOr setup.isModule stx.isModule
+      imports := setup.imports?.getD stx.imports
+      plugins := setup.plugins
+      importArts := setup.importArts
+      opts
+      -- override cmdline options with setup options
+      -- opts := opts.mergeBy (fun _ _ hOpt => hOpt) opts
+    }
     if let some setupChanges := setupChanges? then
       setup ← setupChanges setup
     setupProm.resolve { setup with stx }
     return .ok setup
-    -- change end
   let processor := Language.Lean.process
   let snaps ← processor setup old? ctx
   return (setupProm, snaps)
@@ -181,6 +187,7 @@ namespace Lean
 
 -- from `runAndCollectMessages`
 -- TODO: should we clear snapshotTasks as it does?
+-- TODO: doesn't seem to work as is; for now we use a different strategy.
 def waitForAllMessages : CommandElabM MessageLog :=
   return (← get).messages ++
     (← get).snapshotTasks.foldl (· ++ ·.get.getAll.foldl (· ++ ·.diagnostics.msgLog) .empty) .empty

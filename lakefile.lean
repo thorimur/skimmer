@@ -64,29 +64,66 @@ end
 
 open Lean hiding Module
 
-/-- Waits for the setup file to exist before returning it. -/
-module_facet setupWithTransFile (mod) : System.FilePath := do
-  (← mod.leanArts.fetch).mapM fun _ => -- writes setupFile to disk
-    return mod.setupFile
+/-- Copy-pasted from Lake.Build.Module for now; apparently lakefiles can't import private scopes by being modules? -/
+private partial def fetchTransImportArts
+  (directImports : Array ModuleImport) (directArts : NameMap ImportArtifacts) (nonModule : Bool)
+: FetchM (NameMap ImportArtifacts) := do
+  let q ← directImports.foldlM (init := #[]) fun q imp => do
+    let some mod := imp.module? | return q
+    let input ← (← mod.input.fetch).await
+    let importAll := strictOr nonModule imp.importAll
+    return enqueue importAll input q
+  walk directArts q
+where
+  walk s q := do
+    if h : 0 < q.size then
+      let (mod, importAll) := q.back
+      let q := q.pop
+      if let some arts := s.find? mod.name then
+        -- may need to promote a module system `import` to an `import all`
+        -- size of 1 = non-module, 3 = module system `import`, 4 = `import all`
+        unless importAll && arts.size == 3 do
+          return ← walk s q
+      let info ← (← mod.exportInfo.fetch).await
+      let arts := if importAll then info.allArts else info.arts
+      let s := s.insert mod.name arts
+      let input ← (← mod.input.fetch).await
+      let q := enqueue importAll input q
+      walk s q
+    else
+      return s
+  enqueue importAll input q :=
+    input.imports.foldr (init := q) fun imp q =>
+      if let some mod := imp.module? then
+        if importAll || imp.isExported then
+          q.push (mod, nonModule || (importAll && imp.importAll))
+        else q
+      else q
+
+/-- `leanArts` writes a setup file that contains all transitive imports, and in that way differs slightly from what the `setup` facet gives. However, this file is "temporary" in that it is not added to the trace, so the artifacts we get from the cache don't include setup files, and `leanArts` can succeed with no `setupFile` present.
+
+We could be cleverer about this, recreating the trace and all. Instead, for maximal robustness, we just fetch leanArts to ensure everything is up to date, then recompute. (We could check that it exists first.)
+-/
+module_facet setupWithTrans (mod) : ModuleSetup := do
+  (← mod.leanArts.fetch).bindM fun _ => do -- maybe writes setupFile to disk
+    (← mod.setup.fetch).mapM fun setup => do
+      let directImports := (← (← mod.input.fetch).await).imports
+      let transImpArts ← fetchTransImportArts directImports setup.importArts !setup.isModule
+      return {setup with importArts := transImpArts}
+
+abbrev Lake.Module.setupWithTrans (mod : Lake.Module) : BuildInfo :=
+  mod.facet `setupWithTrans
+
+module_facet setupWithTransPersistent (mod) : System.FilePath := do
+  (← mod.setupWithTrans.fetch).mapM fun setup => do
+    let file := mod.setupFile
+    createParentDirs file
+    IO.FS.writeFile file (toJson setup).pretty
+    return file
 
 -- TODO: dot notation for custom module_facets when :/
 
 -- TODO: can we disable memoization?
-
-/--
-Gets the `ModuleSetup`, but reads from the setup file to provide the `ModuleSetup` with `ModuleArtifacts` populated with all transitive import artifacts, not just direct ones.
-
-TODO: this should really be done a different way?
-
-TODO: withRegisterJob? maybeRegister?
--/
-module_facet setupWithTrans (mod) : ModuleSetup := do
-  (← fetch <| mod.facet `setupWithTransFile).mapM fun file => do -- writes setupFile to disk
-    let arts ← ModuleSetup.load file
-    IO.println s!"{arts.importArts.toArray.map (·.1)}"
-    return arts
-
-abbrev Lake.Module.setupWithTrans (mod : Lake.Module) := mod.facet `setupWithTrans
 
 namespace Inline
 
@@ -170,12 +207,12 @@ elab "inline_modules " mods:Parser.ident+ : command => do
 
 end Inline
 
-inline_modules Skimmer.Refactor.Lake Skimmer.LakeSerialized
+inline_modules Skimmer.Refactor.Lake
 
 -- TODO: write this to a json file somewhere
-target workspace : Serialized.Workspace := do
-  let ws ← getWorkspace
-  return Job.pure ws.toSerializedWorkspace
+-- target workspace : Serialized.Workspace := do
+--   let ws ← getWorkspace
+--   return Job.pure ws.toSerializedWorkspace
 
 target facetNames : Array Name := do
   let facetCfgs := (← getWorkspace).facetConfigs.toArray.map (·.fst)
@@ -197,9 +234,9 @@ script checkTarget (args) do
 
 /-- This fetches `facetName` for every import satisfying `filter`, then runs `shadow` on the result, passing in the modules satisfying filter and the setup.
 
-If `transImportArts := true`, populates the `ModuleSetup.importArts` with all transitive imports. Currently we wait for the module to be built if we want to get the transitive artifacts; we could extract this from lake if we wanted.
+Passes in the filepath for `setup.json`, including transitive imports as in `buildLean`.
 
-TODO: take in a `ModuleSetup` instead of having a flag?
+TODO: split out that bit about the setup?
 
 TODO: don't pass along to `shadow`, just fetch again?
 
@@ -208,23 +245,23 @@ TODO: leave filtering logic to the facet...?
 TODO: group `Module` with `α`?
 
 TODO: automatically infer `facetName` at elaboration time via `decl_name%`? -/
-@[inline] def recFetchShadowingBuildWhere (mod : Module) (fetch : Module → FetchM (Job α))
-    (shadow : ModuleSetup → Array Module → Array α → FetchM (Job α))
-    (filter : Option (Module → FetchM Bool) := none) (transImportArts := false) :
+@[inline] def recFetchShadowingBuildWhere (mod : Module) (fetchFn : Module → FetchM (Job α))
+    (shadow : System.FilePath → Array Module → Array α → FetchM (Job α))
+    (filter : Option (Module → FetchM Bool) := none) :
     FetchM (Job α) := do
-  let setup ← if transImportArts then mod.setupWithTrans.fetch else mod.setup.fetch
-  let imports ← (← mod.imports.fetch).await
+  let setupFile ← fetch <| mod.facet `setupWithTransPersistent
+  let imports ← (← mod.imports.fetch).await -- correct?
   let imports ← if let some filter := filter then imports.filterM filter else pure imports
-  setup.bindM fun setup => do
-    let shadowImported := Job.collectArray <|← imports.mapM fun mod => fetch mod
-    shadowImported.bindM fun shadowImported => shadow setup imports shadowImported
+  setupFile.bindM fun setupFile => do
+    let shadowImported := Job.collectArray <|← imports.mapM fun mod => fetchFn mod
+    shadowImported.bindM fun shadowImported => shadow setupFile imports shadowImported
 
 def recFetchFacetShadowingBuildWhere (mod : Module) (facetName : Name)
     [∀ mod : Module, FamilyOut BuildData (mod.facet facetName).key α] -- TODO: better way?
-    (shadow : ModuleSetup → Array Module → Array α → FetchM (Job α))
-    (filter : Option (Module → FetchM Bool) := none) (transImportArts := false) :
+    (shadow : System.FilePath → Array Module → Array α → FetchM (Job α))
+    (filter : Option (Module → FetchM Bool) := none) :
     FetchM (Job α) :=
-  recFetchShadowingBuildWhere mod (fetch <| ·.facet facetName) shadow filter transImportArts
+  recFetchShadowingBuildWhere mod (fetch <| ·.facet facetName) shadow filter
 
 /-- Note that the current package is not necessarily set for a bare module facet. -/
 def Lake.Module.inCurrPackage.{u} {m : Type → Type u} [Monad m] [MonadReaderOf CurrPackage m]
@@ -252,71 +289,8 @@ We also want the mdata aggregated in advance into a single file, unlike now.
 Also not sure how competing refactors should work. One at a time?
 -/
 
-
-private def getEscapedNameParts? (acc : List String) : Name → Option (List String)
-  | Name.anonymous => if acc.isEmpty then none else some acc
-  | Name.str n s => do
-    let s ← Name.escapePart s
-    getEscapedNameParts? (s::acc) n
-  | Name.num _ _ => none
-
-def mkNameLit? (n : Ident) : Option NameLit :=
-  let info := n.raw.getInfo?.getD .none
-  getEscapedNameParts? [] n.getId  |>.map fun ss =>
-    Syntax.mkNameLit ("`" ++ ".".intercalate ss) info
-
 -- TODO: noramlize for filepaths
 def mkSkimmerMDataFileName (facetName : Name) := s!"editsmdata_{facetName}"
-
-/-- A temporary affordance to allow producing multiple facets. In the future, this will be subsumed
-by driving lake builds. Note that this version means that each build job runs totally
-indepdendently. -/
-macro "refactor_facets" facetNames:ident+ : command => do
-  let cmds ← facetNames.flatMapM fun facetName => do
-    let some nameLit := mkNameLit? facetName | Macro.throwUnsupported
-    return #[
-      ← `(command|
-        module_facet $facetName:ident (mod) : System.FilePath := do
-          recFetchFacetShadowingBuildWhere mod $nameLit
-            (filter := some fun i => return i.pkg == mod.pkg)
-            fun _ _ importArts => do
-              (← mod.lean.fetch).mapM fun _ => do -- mix lean file into trace
-                let args := mod.mkRefactorArgs $nameLit importArts
-                discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-                  discard <| captureProc <|← Lake.fetchExeSpawnArgs `working #[args.json.compress]
-                return args.buildFile -- TODO: correct?
-      ),
-      ← `(command|
-        library_facet $facetName:ident (lib) : System.FilePath := do
-          (← lib.modules.fetch).bindM fun mods => do
-            let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet $nameLit
-            buildFiles.mapM fun buildFiles => do
-              let file := lib.skimmerFilePath (mkSkimmerMDataFileName $nameLit) "json"
-              discard <| buildArtifactUnlessUpToDate file do
-                file.writeJson (lib.mkSkimmerMData $nameLit buildFiles mods)
-              return file
-      ),
-      ← `(command|
-        package_facet $facetName:ident (pkg) : System.FilePath := do
-          let aamods := Job.collectArray (← pkg.leanLibs.mapM (·.modules.fetch))
-          aamods.bindM fun aamods => do
-            -- TODO: abstract out into package_facet modules
-            let mut modset : ModuleSet := {}
-            let mut mods := #[]
-            for amods in aamods do
-              for mod in amods do
-                unless modset.contains mod do
-                  mods := mods.push mod
-                  modset := modset.insert mod
-            let buildFiles := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet $nameLit
-            buildFiles.mapM fun buildFiles => do
-              let file := pkg.skimmerFilePath (mkSkimmerMDataFileName $nameLit) "json"
-              discard <| buildArtifactUnlessUpToDate file do
-                file.writeJson (pkg.mkSkimmerMData $nameLit buildFiles mods)
-              return file
-      )
-    ]
-  return ⟨mkNullNode cmds⟩
 
 /-- Gets a (deduplicated) array of modules in the package's libraries. -/
 package_facet libModules (pkg) : Array Module := do
@@ -331,11 +305,13 @@ package_facet libModules (pkg) : Array Module := do
           modset := modset.insert mod
     return mods
 
-def Lake.Module.refactorWithExe (recordRefactorFacet refactorExe : Name)
+def Lake.Module.refactorWithExe
+    (recordRefactorFacet refactorExe : Name)
+    (setupFile : System.FilePath)
     (importArts : Array System.FilePath) (mod : Lake.Module) :
     FetchM (Job System.FilePath) := do
   (← mod.lean.fetch).bindM fun _ => do -- mix lean file into trace
-    let args := mod.mkRefactorArgs recordRefactorFacet importArts
+    let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
     (← fetchExeSpawnArgs refactorExe #[(toJson args).compress]).mapM fun spawnArgs => do
       discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
         discard <| captureProc spawnArgs
@@ -350,8 +326,8 @@ def Lake.Module.refactorWithExe (recordRefactorFacet refactorExe : Name)
 module_facet recordRefactors (mod) : System.FilePath := do
   recFetchFacetShadowingBuildWhere mod `recordRefactors
     (filter := some fun i => return i.pkg == mod.pkg)
-    fun _ _ replacementPaths =>
-      mod.refactorWithExe `recordRefactors `refactorDeprecatedExe replacementPaths
+    fun setupFile _ replacementPaths =>
+      mod.refactorWithExe `recordRefactors `refactorDeprecatedExe setupFile replacementPaths
 
 open Skimmer
 
@@ -400,45 +376,55 @@ package_facet applyRefactors (pkg) : Array System.FilePath := do
   (← fetch <| pkg.facet `libModules).bindM fun mods =>
     return Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `applyRefactors
 
--- TODO: ensure `leanArts` doesn't replay, there's no need for this
-module_facet recordTryThisRefactors (mod) : System.FilePath := do
-  (← mod.leanArts.fetch).bindM fun _ =>
-    mod.refactorWithExe `recordTryThisRefactors `applyTryThisExe #[]
 
-library_facet recordTryThisRefactors (lib) : System.FilePath := do
+-- TODO: check to make sure errors in leanArts make the whole thing fail?
+-- TODO: does this handle traces correctly?
+module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
+  (← fetch <| mod.facet `setupWithTransPersistent).bindM fun setupFile => do
+    let shouldAttempt :=
+      match ← readTraceFile mod.traceFile with
+      | .ok t => t.log.hasEntries
+      | _ => true
+    unless shouldAttempt do return Job.pure none
+    return (← mod.refactorWithExe `recordCurrentTryThisRefactors `applyTryThisExe setupFile #[]).map
+      (sync := true) some
+
+library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
     let buildFiles := Job.collectArray <|← mods.mapM fun mod =>
-      fetch <| mod.facet `recordTryThisRefactors
+      fetch <| mod.facet `recordCurrentTryThisRefactors
     buildFiles.mapM fun buildFiles => do
       let file := lib.skimmerFilePath "editmdata_trythis" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles mods)
+        file.writeJson (mkGlobalEditMData buildFiles.reduceOption mods)
       return file
 
-package_facet recordTryThisRefactors (pkg) : System.FilePath := do
+package_facet recordCurrentTryThisRefactors (pkg) : System.FilePath := do
   (← fetch <| pkg.facet `libModules).bindM fun mods => do
     let buildFiles := Job.collectArray <|← mods.mapM fun mod =>
-      fetch <| mod.facet `recordTryThisRefactors
+      fetch <| mod.facet `recordCurrentTryThisRefactors
     buildFiles.mapM fun buildFiles => do
       let file := pkg.skimmerFilePath "editmdata_trythis" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles mods)
+        file.writeJson (mkGlobalEditMData buildFiles.reduceOption mods)
       return file
 
 -- Noninteractive for now; also records try this edits.
-module_facet applyTryThis (mod) : System.FilePath := do
-  let recordPath ← fetch <| mod.facet `recordTryThisRefactors
+module_facet applyCurrentTryThis (mod) : Option System.FilePath := do
+  let recordPath ← fetch <| mod.facet `recordCurrentTryThisRefactors
   recordPath.mapM fun recordPath => do
+    let some recordPath := recordPath | return none
     let edits ← EditsRecord.readEdits recordPath
     unless edits.isEmpty do
       -- TODO: lock file?
       let src ← IO.FS.readFile mod.leanFile
       IO.FS.writeFile mod.leanFile <| src.applyEdits edits
-    return recordPath
+    return some recordPath
 
-def applyTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) := do
-  let job := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordTryThisRefactors
+def applyCurrentTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) := do
+  let job := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordCurrentTryThisRefactors
   job.mapM fun recordPaths => do
+    let recordPaths := recordPaths.reduceOption
     let mut acc := #[]
     for mod in mods, recordPath in recordPaths do
       let { mdata, edits, .. } ← recordPath.readJson EditsRecord
@@ -449,8 +435,8 @@ def applyTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) 
         acc := acc.push (mod.name, mdata.numEdits)
     return acc
 
-library_facet applyTryThis (lib) : Array (Name × Nat) := do
-  (← lib.modules.fetch).bindM (applyTryThisAux ·)
+library_facet applyCurrentTryThis (lib) : Array (Name × Nat) := do
+  (← lib.modules.fetch).bindM (applyCurrentTryThisAux ·)
 
-package_facet applyTryThis (pkg) : Array (Name × Nat) := do
-  (← fetch <| pkg.facet `libModules).bindM (applyTryThisAux ·)
+package_facet applyCurrentTryThis (pkg) : Array (Name × Nat) := do
+  (← fetch <| pkg.facet `libModules).bindM (applyCurrentTryThisAux ·)

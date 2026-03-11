@@ -158,6 +158,14 @@ public structure Lake.JsonModule where
   leanFile : System.FilePath
 deriving Inhabited, ToJson, FromJson
 
+/-- Args common to any exe. Todo: reorganize. -/
+public structure ExeArgs where
+  name : Name
+  mod : Lake.JsonModule
+  setupFile : System.FilePath
+  importArts : Array System.FilePath
+deriving Inhabited, ToJson, FromJson
+
 -- Temp: one big file
 /-- Computed by the lake facet orchestrating edit recording prior to recording edits, then fed to the refactor-recording process. `replacements` contains the filepaths for output artifacts (for now, `EditsRecord`s) of imports.
 
@@ -165,10 +173,7 @@ This is intended to be small and easy to compute, as it will be passed over json
 
 As usual, buildfile paths are synchronized by calling the same constructor on common `Lake.Module`s rather than passing the paths around.
 -/
-public structure RefactorArgs where
-  name : Name
-  mod : Lake.JsonModule
-  importArts : Array System.FilePath
+public structure RefactorArgs extends ExeArgs where
   buildFile : System.FilePath
   preview : Bool
 deriving Inhabited, ToJson, FromJson
@@ -193,12 +198,14 @@ namespace Lake.Module
 open Skimmer
 
 -- don't need to create parent dirs, taken care of at write time
-def mkRefactorArgs (facetName : Name) (mod : Lake.Module) (importArts : Array System.FilePath)
+def mkRefactorArgs (facetName : Name) (mod : Lake.Module) (setupFile : System.FilePath)
+    (importArts : Array System.FilePath)
     (preview := false) :
     RefactorArgs where
   name := facetName
   mod := { name := mod.name, leanFile := mod.leanFile }
   buildFile := mod.skimmerEditsRecord
+  setupFile
   importArts
   preview
 
