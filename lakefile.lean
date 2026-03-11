@@ -214,16 +214,16 @@ inline_modules Skimmer.Refactor.Lake
 --   let ws ← getWorkspace
 --   return Job.pure ws.toSerializedWorkspace
 
-target facetNames : Array Name := do
+target facets : Array Name := do
   let facetCfgs := (← getWorkspace).facetConfigs.toArray.map (·.fst)
     |>.filter (!(`default).isSuffixOf ·)
     |>.qsort (·.lt)
   return Job.pure facetCfgs
 
-target libraries (pkg) : Array Name := do
+package_facet libs (pkg) : Array Name := do
   return Job.pure <| pkg.leanLibs.map (·.name) |>.qsort Name.lt
 
-target targetNames (pkg) : Array Name := do
+package_facet targets (pkg) : Array Name := do
   return Job.pure <| (pkg.targetDecls.map (·.name)).qsort Name.lt
 
 script checkTarget (args) do
