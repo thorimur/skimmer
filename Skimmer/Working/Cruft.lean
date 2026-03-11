@@ -173,6 +173,7 @@ protected def runFrontend
       setup ← setupChanges setup
     setupProm.resolve { setup with stx }
     return .ok setup
+  unsafe enableInitializersExecution
   let processor := Language.Lean.process
   let snaps ← processor setup old? ctx
   return (setupProm, snaps)
