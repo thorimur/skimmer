@@ -264,8 +264,8 @@ module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
       | .ok t => t.log.hasEntries
       | _ => true
     unless shouldAttempt do return Job.pure none
-    return (← mod.refactorWithExe `recordCurrentTryThisRefactors `applyTryThisExe setupFile #[]).map
-      (sync := true) some
+    let job ← mod.refactorWithExe `recordCurrentTryThisRefactors `applyTryThisExe setupFile #[]
+    return job.map some
 
 library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
