@@ -14,14 +14,14 @@ open Lean
 public section
 
 /-- Exactly like `Lake.env`, but just provides the `SpawnArgs`. -/
-public def Lake.envSpawnArgs.{u} {m : Type → Type u} [MonadWorkspace m] [Monad m]
+@[inline] public def Lake.envSpawnArgs.{u} {m : Type → Type u} [MonadWorkspace m] [Monad m]
     (cmd : String) (args : Array String := #[]) :
     m IO.Process.SpawnArgs := return {cmd, args, env := ← getAugmentedEnv}
 
 /-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. Note that this does not alter the trace; see instead `fetchExeSpawnArgs` to mix the exe's trace into the current job. -/
-public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
+@[inline] public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
     [MonadWorkspace m] [Monad m] [MonadLiftT IO m] [MonadError m]
-    (name : Name) (args  : Array String := #[])
+    (name : Name) (args : Array String := #[])
     (buildConfig : BuildConfig := {}) : m IO.Process.SpawnArgs := do
   let ws ← getWorkspace
   let some exe := ws.findLeanExe? name
@@ -31,7 +31,7 @@ public def Lake.exeSpawnArgs.{u} {m : Type → Type u}
 
 /-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. -/
 public def Lake.fetchExeSpawnArgs
-    (name : Name) (args  : Array String := #[]) : FetchM (Job IO.Process.SpawnArgs) := do
+    (name : Name) (args  : Array String := #[]) : JobM (Job IO.Process.SpawnArgs) := do
   let some exe := (← getWorkspace).findLeanExe? name
     | error s!"unknown executable `{name}`"
   (← exe.fetch).mapM (sync := true) fun exeFile =>
