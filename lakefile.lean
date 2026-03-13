@@ -106,7 +106,9 @@ We could be cleverer about this, recreating the trace and all. Instead, for maxi
 -/
 module_facet setupWithTrans (mod) : ModuleSetup := do
   (← mod.leanArts.fetch).bindM fun _ => do -- maybe writes setupFile to disk
+    -- ignores + will obliterate  existing file in `setupWithTransPersistent` :(
     (← mod.setup.fetch).mapM fun setup => do
+      -- TODO: bench against `mod.transImports.fetch` approach
       let directImports := (← (← mod.input.fetch).await).imports
       let transImpArts ← fetchTransImportArts directImports setup.importArts !setup.isModule
       return {setup with importArts := transImpArts}
@@ -245,10 +247,10 @@ TODO: leave filtering logic to the facet...?
 TODO: group `Module` with `α`?
 
 TODO: automatically infer `facetName` at elaboration time via `decl_name%`? -/
-@[inline] def recFetchShadowingBuildWhere (mod : Module) (fetchFn : Module → FetchM (Job α))
-    (shadow : System.FilePath → Array Module → Array α → FetchM (Job α))
-    (filter : Option (Module → FetchM Bool) := none) :
-    FetchM (Job α) := do
+@[inline] def recFetchShadowingBuildWhere (mod : Module) (fetchFn : Module → JobM (Job α))
+    (shadow : System.FilePath → Array Module → Array α → JobM (Job α))
+    (filter : Option (Module → JobM Bool) := none) :
+    JobM (Job α) := do
   let setupFile ← fetch <| mod.facet `setupWithTransPersistent
   let imports ← (← mod.imports.fetch).await -- correct?
   let imports ← if let some filter := filter then imports.filterM filter else pure imports
@@ -258,9 +260,9 @@ TODO: automatically infer `facetName` at elaboration time via `decl_name%`? -/
 
 def recFetchFacetShadowingBuildWhere (mod : Module) (facetName : Name)
     [∀ mod : Module, FamilyOut BuildData (mod.facet facetName).key α] -- TODO: better way?
-    (shadow : System.FilePath → Array Module → Array α → FetchM (Job α))
-    (filter : Option (Module → FetchM Bool) := none) :
-    FetchM (Job α) :=
+    (shadow : System.FilePath → Array Module → Array α → JobM (Job α))
+    (filter : Option (Module → JobM Bool) := none) :
+    JobM (Job α) :=
   recFetchShadowingBuildWhere mod (fetch <| ·.facet facetName) shadow filter
 
 /-- Note that the current package is not necessarily set for a bare module facet. -/
