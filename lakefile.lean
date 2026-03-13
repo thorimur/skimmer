@@ -302,9 +302,9 @@ module_facet applyCurrentTryThis (mod) : Option System.FilePath := do
 def applyCurrentTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) := do
   let job := Job.collectArray <|← mods.mapM fun mod => fetch <| mod.facet `recordCurrentTryThisRefactors
   job.mapM fun recordPaths => do
-    let recordPaths := recordPaths.reduceOption
     let mut acc := #[]
-    for mod in mods, recordPath in recordPaths do
+    for mod in mods, recordPath? in recordPaths do
+      let some recordPath := recordPath? | continue
       let { mdata, edits, .. } ← recordPath.readJson EditsRecord
       unless edits.isEmpty do
         -- TODO: lock file?
