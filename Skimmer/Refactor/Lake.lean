@@ -34,7 +34,7 @@ public def Lake.fetchExeSpawnArgs
     (name : Name) (args  : Array String := #[]) : JobM (Job IO.Process.SpawnArgs) := do
   let some exe := (← getWorkspace).findLeanExe? name
     | error s!"unknown executable `{name}`"
-  (← exe.fetch).mapM (sync := true) fun exeFile =>
+  (← exe.fetch).mapM fun exeFile =>
     Lake.envSpawnArgs exeFile.toString args
 
 def Lake.Package.skimmerDir (pkg : Package) : System.FilePath :=
