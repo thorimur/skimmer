@@ -244,9 +244,10 @@ def Lake.Module.refactorWithExe
     (setupFile : System.FilePath)
     (importArts : Array System.FilePath) (mod : Lake.Module) :
     JobM (Job System.FilePath) := do
-    let leanJob ← mod.lean.fetch
-    discard leanJob.await
-    addTrace leanJob.getTrace
+  (← mod.lean.fetch).bindM fun _ => do
+    -- let leanJob ← mod.lean.fetch
+    -- discard leanJob.await
+    -- addTrace leanJob.getTrace
     let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
     (← fetchExeSpawnArgs refactorExe #[(toJson args).compress]).mapM fun spawnArgs => do
       discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
