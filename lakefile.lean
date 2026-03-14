@@ -243,16 +243,16 @@ def Lake.Module.refactorWithExe
     (recordRefactorFacet refactorExe : Name)
     (setupFile : System.FilePath)
     (importArts : Array System.FilePath) (mod : Lake.Module) :
-    JobM (Job System.FilePath) := do
-  (← mod.lean.fetch).bindM fun _ => do
-    -- let leanJob ← mod.lean.fetch
-    -- discard leanJob.await
-    -- addTrace leanJob.getTrace
-    let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
-    (← fetchExeSpawnArgs refactorExe #[(toJson args).compress]).mapM fun spawnArgs => do
-      discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-        discard <| captureProc spawnArgs
-      return args.buildFile -- TODO: correct?
+    FetchM (Job System.FilePath) := do
+  let leanJob ← mod.lean.fetch
+  discard leanJob.await
+  addTrace leanJob.getTrace
+  let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
+  let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
+  spawnArgs.mapM fun spawnArgs => do
+    discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+      discard <| captureProc spawnArgs
+    return args.buildFile -- TODO: correct?
 
 open Skimmer
 
