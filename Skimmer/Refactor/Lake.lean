@@ -31,7 +31,7 @@ public section
 
 /-- Exactly like `Lake.exe`, but just provides the `SpawnArgs`. -/
 public def Lake.fetchExeSpawnArgs
-    (name : Name) (args  : Array String := #[]) : JobM (Job IO.Process.SpawnArgs) := do
+    (name : Name) (args  : Array String := #[]) : FetchM (Job IO.Process.SpawnArgs) := do
   let some exe := (← getWorkspace).findLeanExe? name
     | error s!"unknown executable `{name}`"
   (← exe.fetch).mapM fun exeFile =>
