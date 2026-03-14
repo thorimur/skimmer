@@ -239,33 +239,59 @@ package_facet libModules (pkg) : Array Module := do
           modset := modset.insert mod
     return mods
 
-def Lake.Module.refactorWithExe
-    (recordRefactorFacet refactorExe : Name)
-    (setupFile : System.FilePath)
-    (importArts : Array System.FilePath) (mod : Lake.Module) :
-    FetchM (Job System.FilePath) := do
+@[inline] def Lake.Module.fetchRefactorWithExeSpawnArgs
+    (recordRefactorFacet refactorExe : Name) (setupFile : System.FilePath)
+    (importArts : Array System.FilePath)
+    (mod : Lake.Module) :
+    FetchM (Skimmer.RefactorArgs × Job (IO.Process.SpawnArgs)) := do
   let leanJob ← mod.lean.fetch
   discard leanJob.await
   addTrace leanJob.getTrace
   let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
-  let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
-  spawnArgs.mapM fun spawnArgs => do
+  return (args, ← fetchExeSpawnArgs refactorExe #[(toJson args).compress])
+
+def refactorWithExe
+    (args : Skimmer.RefactorArgs) (job : Job (IO.Process.SpawnArgs)) :
+    FetchM (Job System.FilePath) := do
+  -- let leanJob ← mod.lean.fetch
+  -- discard leanJob.await
+  -- addTrace leanJob.getTrace
+  -- let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
+  -- let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
+  job.mapM fun spawnArgs => do
     discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
       discard <| captureProc spawnArgs
     return args.buildFile -- TODO: correct?
+
+-- def Lake.Module.refactorWithExe
+--     (recordRefactorFacet refactorExe : Name)
+--     (setupFile : System.FilePath)
+--     (importArts : Array System.FilePath) (mod : Lake.Module) :
+--     FetchM (Job System.FilePath) := do
+--   -- let leanJob ← mod.lean.fetch
+--   -- discard leanJob.await
+--   -- addTrace leanJob.getTrace
+--   -- let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
+--   -- let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
+--   let (args, job) ← mod.fetchRefactorWithExeSpawnArgs recordRefactorFacet refactorExe setupFile importArts
+--   job.mapM fun spawnArgs => do
+--     discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
+--       discard <| captureProc spawnArgs
+--     return args.buildFile -- TODO: correct?
 
 open Skimmer
 
 -- TODO: check to make sure errors in leanArts make the whole thing fail?
 -- TODO: does this handle traces correctly?
 module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
-  (← fetch <| mod.facet `setupWithTransPersistent).bindM fun setupFile => do
+  let (args, exeJob) ← mod.fetchRefactorWithExeSpawnArgs `recordCurrentTryThisRefactors `applyTryThisExe mod.setupFile #[]
+  (← fetch <| mod.facet `setupWithTransPersistent).bindM fun _ => do
     let shouldAttempt :=
       match ← readTraceFile mod.traceFile with
       | .ok t => t.log.hasEntries
       | _ => true
     unless shouldAttempt do return Job.pure none
-    let job ← mod.refactorWithExe `recordCurrentTryThisRefactors `applyTryThisExe setupFile #[]
+    let job ← refactorWithExe args exeJob
     return job.map some
 
 library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
