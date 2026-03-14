@@ -92,9 +92,14 @@ structure GlobalEditMData where
   arts : Array (Name × System.FilePath)
 deriving ToJson, FromJson, Inhabited, Hashable
 
-def mkGlobalEditMData (buildFiles : Array System.FilePath) (mods : Array Lake.Module) :
+def mkGlobalEditMData (buildFiles : Array (Option System.FilePath)) (mods : Array Lake.Module) :
     GlobalEditMData where
-  arts := mods.map (·.name) |>.zip buildFiles
+  arts := Id.run do
+    let mut arts := #[]
+    for mod in mods, buildFile? in buildFiles do
+      let some buildFile := buildFile? | continue
+      arts := arts.push (mod.name, buildFile)
+    return arts
 
 /-- Written to Json to record edits. If present, `preview` contains the file with edits applied.
 TODO: `NameMap` could get bulky, and in standard operation we'd write it many times, even when not changing it. This should be improved.

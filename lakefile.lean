@@ -275,7 +275,7 @@ library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
     buildFiles.mapM fun buildFiles => do
       let file := lib.skimmerFilePath "editmdata_trythis" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles.reduceOption mods)
+        file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
 package_facet recordCurrentTryThisRefactors (pkg) : System.FilePath := do
@@ -285,7 +285,7 @@ package_facet recordCurrentTryThisRefactors (pkg) : System.FilePath := do
     buildFiles.mapM fun buildFiles => do
       let file := pkg.skimmerFilePath "editmdata_trythis" "json"
       discard <| buildArtifactUnlessUpToDate file do
-        file.writeJson (mkGlobalEditMData buildFiles.reduceOption mods)
+        file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
 -- Noninteractive for now; also records try this edits.
