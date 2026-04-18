@@ -7,6 +7,7 @@ module
 
 public import Lean.Data.NameMap
 public import Lean.Elab.Command
+public meta import Lean.Elab.MutualDef
 import Lean
 
 /-! # `local_linter`

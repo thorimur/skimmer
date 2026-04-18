@@ -7,6 +7,7 @@ module
 
 public import Lake
 import Lake.Config.Meta
+import all Lake.Config.Cache
 
 public section
 
@@ -520,7 +521,7 @@ def _root_.Lake.Package.toSerializedPackage (pkg : Package) : Serialized.Package
 deriving instance FromJson for Dynlib
 
 deriving instance ToJson, FromJson for Cache, ElanInstall, LeanInstall, LakeInstall
-deriving instance ToJson, FromJson for Lake.Env
+deriving instance ToJson, FromJson for CacheServiceName, Lake.Env
 
 /-- A facet's declarative configuration. -/
 public protected structure FacetConfig (name : Name) : Type where
