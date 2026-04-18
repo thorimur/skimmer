@@ -295,10 +295,11 @@ TODO: this is not a permanent design. Ideally we want to dispatch work as soon a
 If we even continue to use snapshots at all, that is. But the incremental reuse is probably good for the computer while editing just as it is for the human.
 -/
 partial def InitialSnapshot.toCommandSnaps (snap : InitialSnapshot) :
-    Option CommandSnaps := do
+    Except String CommandSnaps := do
   -- Unfortunately this seems throw away nearly everything?
-  let snap ← snap.result?
-  let processedState ← snap.processedSnap.get.result? -- blocks
+  let some snap := snap.result? | throw "Failed to get `.result?` of `InitialSnapshot`."
+  let some processedState := snap.processedSnap.get.result? -- blocks
+    | throw "Failed to get `.result?` of `HeaderProcessedSnapshot`."
   return {
     headerParserState := snap.parserState
     headerState := processedState.cmdState

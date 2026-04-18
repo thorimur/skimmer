@@ -111,9 +111,9 @@ open Skimmer
   let some setup := setup.result?.get | throw <| .userError "Could not find setup."
   return (inputCtx, setup, snap)
 
-@[inline] def Lean.Language.Lean.InitialSnapshot.getCommandSnaps (snap : Language.Lean.InitialSnapshot) :
-    IO Language.Lean.CommandSnaps := do
-  snap.toCommandSnaps.getDM (throw <| .userError "Could not find snaps.")
+@[inline] def Lean.Language.Lean.InitialSnapshot.getCommandSnaps
+    (snap : Language.Lean.InitialSnapshot) : IO Language.Lean.CommandSnaps :=
+  IO.ofExcept snap.toCommandSnaps
 
 def Skimmer.Edit.postprocess (newImportPosition : String.Pos.Raw) (edits : Array Edit) :
     Array Edit := Id.run do
