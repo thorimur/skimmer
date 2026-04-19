@@ -59,8 +59,12 @@ instance : ToMessageData Edit where
     else
       m!"({e.range} ↦ \"{e.replacement}\")"
 
-/-- Assumes `edits` is sorted, and the ranges are disjoint. -/
+/-- Assumes `edits` is sorted, and the ranges are disjoint. Converts `text` to LF and back if
+necessary. Note that all positions in `Edit`s refer to the LF-normalized version of `text` since
+the Lean frontend normalizes line endings before processing the file. -/
 def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
+  let hasCRLF := text.contains '\r' -- TODO: O(|text|) scan in the common LF case. Optimizable?
+  let text := if hasCRLF then text.crlfToLf else text
   let mut out : String := ""
   let mut prevEndPos : text.Pos := text.startPos
   for edit in edits do -- note: already sorted
@@ -80,7 +84,7 @@ def String.applyEdits (text : String) (edits : Array Edit) : String := Id.run do
       prevEndPos := replaced.endExclusive
     -- TODO: trace/error if not
   out := out ++ text.sliceFrom prevEndPos
-  return out
+  return if hasCRLF then out.replace '\n' "\r\n" else out
 
 /-- Assumes `edits` is sorted, and the ranges are disjoint. -/
 def String.applyEditsWithTracing {m}
