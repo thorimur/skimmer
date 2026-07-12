@@ -31,6 +31,7 @@ partial def Lean.MessageData.getFirstWidget? (msg : MessageData)
     let some msg := d.get? MessageData | return none
     msg.getFirstWidget? filter
   | .ofWidget wi _ => do if ← filter wi then return wi else return none
+  | .ofOriginatingSyntax _ msg => msg.getFirstWidget? filter
 
 def Lean.MessageData.getFirstTextSuggestion? (msg : MessageData) :
     IO (Option <| Lsp.Range × String) := do

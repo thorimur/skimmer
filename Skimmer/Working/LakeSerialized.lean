@@ -84,6 +84,10 @@ deriving instance ToJson, FromJson for WorkspaceConfig
 deriving instance ToJson, FromJson for BuildType
 deriving instance ToJson, FromJson for LeanOption
 deriving instance ToJson, FromJson for DependencySrc
+deriving instance ToJson, FromJson for ComparatorOp
+deriving instance ToJson, FromJson for VerComparator
+deriving instance ToJson, FromJson for VerRange
+deriving instance ToJson, FromJson for InputVer
 deriving instance ToJson, FromJson for Dependency
 
 -- Needed since `deriving` demands `[ToJson α]`

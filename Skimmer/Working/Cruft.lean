@@ -37,7 +37,7 @@ open Lean Language Lean Elab
 -- #check Elab.HeaderProcessedSnapshot -- definition headers
 section
 variable (stx : HeaderSyntax) (mainModuleName : Name) (opts : Options) (trustLevel : UInt32 := 0)
-    (plugins : Array System.FilePath := #[])
+    (plugins : Array Plugin := #[])
 
 /-- Ripped out of `runFrontend` for convenience. Assumes we don't have a `setup` to merge into as `runFrontend` optionally allows. As such, does not need to be monadic. We might want a monadic version if these values are in a convenient monad. -/
 @[inline]
