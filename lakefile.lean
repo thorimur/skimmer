@@ -7,8 +7,6 @@ open Lake DSL
 
 package skimmer where version := v!"0.1.0"
 
--- require "leanprover-community" / batteries @ git "main"
-
 @[default_target] lean_lib Skimmer where
   leanOptions := #[⟨`experimental.module, true⟩]
 
@@ -265,60 +263,49 @@ package_facet libModules (pkg) : Array Module := do
           modset := modset.insert mod
     return mods
 
+/-- Fetches the refactor exe and assembles its invocation for `mod`. The returned job's trace
+covers the exe binary only; the caller is responsible for the record's other dependencies
+(source, setup) — see `refactorWithExe`. -/
 @[inline] def Lake.Module.fetchRefactorWithExeSpawnArgs
     (recordRefactorFacet refactorExe : Name) (setupFile : System.FilePath)
     (importArts : Array System.FilePath)
     (mod : Lake.Module) :
-    FetchM (Skimmer.RefactorArgs × Job (IO.Process.SpawnArgs)) := do
-  let leanJob ← mod.lean.fetch
-  discard leanJob.await
-  addTrace leanJob.getTrace
+    FetchM (Skimmer.RefactorArgs × Job IO.Process.SpawnArgs) := do
   let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
   return (args, ← fetchExeSpawnArgs refactorExe #[(toJson args).compress])
 
-def refactorWithExe
-    (args : Skimmer.RefactorArgs) (job : Job (IO.Process.SpawnArgs)) :
-    FetchM (Job System.FilePath) := do
-  -- let leanJob ← mod.lean.fetch
-  -- discard leanJob.await
-  -- addTrace leanJob.getTrace
-  -- let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
-  -- let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
-  job.mapM fun spawnArgs => do
-    discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
-      discard <| captureProc spawnArgs
-    return args.buildFile -- TODO: correct?
+/-- Builds `args.buildFile` (the module's `EditsRecord`) by running the refactor exe, unless it
+is up-to-date.
 
--- def Lake.Module.refactorWithExe
---     (recordRefactorFacet refactorExe : Name)
---     (setupFile : System.FilePath)
---     (importArts : Array System.FilePath) (mod : Lake.Module) :
---     FetchM (Job System.FilePath) := do
---   -- let leanJob ← mod.lean.fetch
---   -- discard leanJob.await
---   -- addTrace leanJob.getTrace
---   -- let args := mod.mkRefactorArgs recordRefactorFacet setupFile importArts
---   -- let spawnArgs ← fetchExeSpawnArgs refactorExe #[(toJson args).compress]
---   let (args, job) ← mod.fetchRefactorWithExeSpawnArgs recordRefactorFacet refactorExe setupFile importArts
---   job.mapM fun spawnArgs => do
---     discard <| buildArtifactUnlessUpToDate (text := true) args.buildFile do
---       discard <| captureProc spawnArgs
---     return args.buildFile -- TODO: correct?
+The record's saved input trace is `deps`'s trace mixed with `exeJob`'s (and any ambient trace).
+`deps` must carry everything that should invalidate the record — at minimum the module's
+source.
+
+`restore := true` keeps the record materialized at `args.buildFile` on artifact-cache hits,
+since downstream facets read it back from that path. -/
+def refactorWithExe
+    (args : Skimmer.RefactorArgs) (exeJob : Job IO.Process.SpawnArgs) (deps : Job α) :
+    SpawnM (Job System.FilePath) :=
+  exeJob.zipWith (sync := true) (fun spawnArgs _ => spawnArgs) deps |>.mapM fun spawnArgs => do
+    discard <| buildArtifactUnlessUpToDate (text := true) (restore := true) args.buildFile do
+      discard <| captureProc spawnArgs
+    return args.buildFile
 
 open Skimmer
 
 -- TODO: check to make sure errors in leanArts make the whole thing fail?
--- TODO: does this handle traces correctly?
 module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
   let (args, exeJob) ← mod.fetchRefactorWithExeSpawnArgs `recordCurrentTryThisRefactors `applyTryThisExe mod.setupFile #[]
-  (← fetch <| mod.facet `setupWithTransPersistent).bindM fun _ => do
-    let shouldAttempt :=
-      match ← readTraceFile mod.traceFile with
-      | .ok t => t.log.hasEntries
-      | _ => true
-    unless shouldAttempt do return Job.pure none
-    let job ← refactorWithExe args exeJob
-    return job.map some
+  let shouldAttempt :=
+    match ← readTraceFile mod.traceFile with
+    | .ok t => t.log.hasEntries
+    | _ => true
+  unless shouldAttempt do return Job.pure none
+  let srcJob ← mod.lean.fetch
+  let setupJob ← fetch <| mod.facet `setupWithTransPersistent
+  -- `setupJob`'s trace transitively includes the module's full input trace (via `leanArts`);
+  -- `srcJob` states the source dependency directly, without relying on that chain.
+  return (← refactorWithExe args exeJob (srcJob.mix setupJob)).map some
 
 library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
@@ -340,16 +327,26 @@ package_facet recordCurrentTryThisRefactors (pkg) : System.FilePath := do
         file.writeJson (mkGlobalEditMData buildFiles mods)
       return file
 
+/-- Applies the edits at `recordPath` to `mod`'s source file. When the record carries a source
+hash, refuses (with an error) to apply edits to a source that changed since they were recorded,
+since the edit offsets index into that exact text. Returns the record's metadata. -/
+def applyEditsRecord (mod : Module) (recordPath : System.FilePath) : LogIO EditMData := do
+  let record ← recordPath.readJson EditsRecord
+  unless record.edits.isEmpty do
+    -- TODO: lock file?
+    let src ← IO.FS.readFile mod.leanFile
+    unless record.srcHash == .ofString src do
+      error s!"{mod.name}: stale edits record: {mod.leanFile} changed since its edits were \
+        recorded; not applying them (rebuild the record, or delete {recordPath})"
+    IO.FS.writeFile mod.leanFile <| src.applyEdits record.edits
+  return record.mdata
+
 -- Noninteractive for now; also records try this edits.
 module_facet applyCurrentTryThis (mod) : Option System.FilePath := do
   let recordPath ← fetch <| mod.facet `recordCurrentTryThisRefactors
   recordPath.mapM fun recordPath => do
     let some recordPath := recordPath | return none
-    let edits ← EditsRecord.readEdits recordPath
-    unless edits.isEmpty do
-      -- TODO: lock file?
-      let src ← IO.FS.readFile mod.leanFile
-      IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+    discard <| applyEditsRecord mod recordPath
     return some recordPath
 
 def applyCurrentTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name × Nat)) := do
@@ -358,11 +355,8 @@ def applyCurrentTryThisAux (mods : Array Module) : FetchM (Job <| Array (Name ×
     let mut acc := #[]
     for mod in mods, recordPath? in recordPaths do
       let some recordPath := recordPath? | continue
-      let { mdata, edits, .. } ← recordPath.readJson EditsRecord
-      unless edits.isEmpty do
-        -- TODO: lock file?
-        let src ← IO.FS.readFile mod.leanFile
-        IO.FS.writeFile mod.leanFile <| src.applyEdits edits
+      let mdata ← applyEditsRecord mod recordPath
+      unless mdata.numEdits == 0 do
         acc := acc.push (mod.name, mdata.numEdits)
     return acc
 

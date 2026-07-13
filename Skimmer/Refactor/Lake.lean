@@ -110,6 +110,10 @@ In the future, these should be split out into separate build files. The obstruct
 -/
 structure EditsRecord where
   mdata : EditMData
+  /-- Hash of the exact source text (no line normalization) that the `edits` offsets index into.
+  This is *not* used by Lake for dirty-checking; it's just checked at apply time for corruption
+  detection. -/
+  srcHash : Lake.Hash
   edits : Array Edit
   preview : Option String
 deriving ToJson, FromJson, Inhabited, Repr

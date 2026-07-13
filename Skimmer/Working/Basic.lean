@@ -157,6 +157,7 @@ def Skimmer.EditsRecordWithState.ofEdits
   mdata := {
     numEdits := edits.size
     numReviews := edits.countP (·.shouldReview?.isSome) }
+  srcHash := .ofString source
   edits
   state
   preview := if preview then some (source.applyEdits edits) else none
@@ -167,6 +168,7 @@ def Skimmer.EditsRecord.ofEdits
   mdata := {
     numEdits := edits.size
     numReviews := edits.countP (·.shouldReview?.isSome) }
+  srcHash := .ofString source
   edits
   preview := if preview then some (source.applyEdits edits) else none
 
