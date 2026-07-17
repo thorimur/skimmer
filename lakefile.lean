@@ -20,38 +20,56 @@ package skimmer where version := v!"0.1.0"
 open Lean hiding Module
 
 /-- Copy-pasted from Lake.Build.Module for now; apparently lakefiles can't import private scopes by being modules? -/
-private partial def fetchTransImportArts
+structure TransImportEntry where
+  mod : Module
+  /-- Whether to include all module artifacts and traverse the module's direct imports. -/
+  importAll : Bool
+  /-- Whether this module has been transitively imported by a `meta import`. -/
+  needsMeta : Bool
+
+/-- Copy-pasted from Lake.Build.Module for now; apparently lakefiles can't import private scopes by being modules? -/
+partial def fetchTransImportArts
   (directImports : Array ModuleImport) (directArts : NameMap ImportArtifacts) (nonModule : Bool)
 : FetchM (NameMap ImportArtifacts) := do
-  let q ← directImports.foldlM (init := #[]) fun q imp => do
+  let q ← directImports.foldrM (init := #[]) fun imp q => do
     let some mod := imp.module? | return q
     let input ← (← mod.input.fetch).await
     let importAll := strictOr nonModule imp.importAll
-    return enqueue importAll input q
-  walk directArts q
+    return enqueue importAll imp.isMeta input q
+  walk directArts {} q
 where
-  walk s q := do
+  walk s (metaVisited : NameSet) (q : Array TransImportEntry) := do
     if h : 0 < q.size then
-      let (mod, importAll) := q.back
+      let {mod, importAll, needsMeta} := q.back
       let q := q.pop
       if let some arts := s.find? mod.name then
-        -- may need to promote a module system `import` to an `import all`
-        -- size of 1 = non-module, 3 = module system `import`, 4 = `import all`
-        unless importAll && arts.size == 3 do
-          return ← walk s q
+        /-
+        A module system `import` may need to be promoted to a
+        wider import (`meta import`, `import all`) on another branch.
+        -/
+        -- Only re-process a module sitting at the plain public-module level: `.server` present =>
+        -- module, no `.private` => not already `import all`. An entry already at `import all` (with
+        -- `.private`) or a non-module (no `.server`) must not be re-inserted, as that would demote it.
+        let needsMeta := needsMeta && !metaVisited.contains mod.name
+        unless (importAll || needsMeta) && arts.oleanServer?.isSome && arts.oleanPrivate?.isNone do
+          return ← walk s metaVisited q
       let info ← (← mod.exportInfo.fetch).await
       let arts := if importAll then info.allArts else info.arts
       let s := s.insert mod.name arts
+      let metaVisited := if importAll || needsMeta then metaVisited.insert mod.name else metaVisited
       let input ← (← mod.input.fetch).await
-      let q := enqueue importAll input q
-      walk s q
+      let q := enqueue importAll needsMeta input q
+      walk s metaVisited q
     else
       return s
-  enqueue importAll input q :=
+  enqueue importAll needsMeta input q :=
     input.imports.foldr (init := q) fun imp q =>
       if let some mod := imp.module? then
-        if importAll || imp.isExported then
-          q.push (mod, nonModule || (importAll && imp.importAll))
+        let reachable := importAll || imp.isExported
+        let importAll := nonModule || (importAll && imp.importAll)
+        let needsMeta := needsMeta || (reachable && imp.isMeta)
+        if reachable || needsMeta then
+          q.push {mod, importAll, needsMeta}
         else q
       else q
 
@@ -162,6 +180,14 @@ elab "inline_modules " mods:Parser.ident+ : command => do
 
 end Inline
 
+/--
+warning: `@[expose]` has no effect outside a `module` file
+---
+warning: `@[expose]` has no effect outside a `module` file
+---
+warning: `@[expose]` has no effect outside a `module` file
+-/
+#guard_msgs in
 inline_modules Skimmer.Refactor.Lake
 
 -- TODO: we may want instead to stick to general `FetchM` functions.
