@@ -265,7 +265,7 @@ package_facet libModules (pkg) : Array Module := do
 
 /-- Fetches the refactor exe and assembles its invocation for `mod`. The returned job's trace
 covers the exe binary only; the caller is responsible for the record's other dependencies
-(source, setup) — see `refactorWithExe`. -/
+(e.g. source file, `setup`). See `refactorWithExe`. -/
 @[inline] def Lake.Module.fetchRefactorWithExeSpawnArgs
     (recordRefactorFacet refactorExe : Name) (setupFile : System.FilePath)
     (importArts : Array System.FilePath)
@@ -278,12 +278,12 @@ covers the exe binary only; the caller is responsible for the record's other dep
 is up-to-date. Returns `none` if `shouldRun` declines to run the exe at all.
 
 The record's saved input trace is `deps`'s trace mixed with `exeJob`'s (and any ambient trace).
-`deps` must carry everything that should invalidate the record — at minimum the module's
-source.
+As such, `deps` must carry everything that should invalidate the record (at minimum the module's
+source).
 
-`shouldRun` is evaluated in `JobM` *after* `deps` completes, so it may consult state that `deps`
-is responsible for producing — in particular the module's own build. Use it to avoid spawning
-the exe (which re-elaborates the module) when the answer is known to be empty.
+`shouldRun` is evaluated in `JobM` after `deps` completes, so it may consult state that `deps`
+is responsible for producing (in particular the trace file post-build). We use it to avoid spawning
+the exe when there are definitely no refactors.
 
 `restore := true` keeps the record materialized at `args.buildFile` on artifact-cache hits,
 since downstream facets read it back from that path. -/
@@ -297,17 +297,17 @@ def refactorWithExe
       discard <| captureProc spawnArgs
     return some args.buildFile
 
-/-- Whether `mod`'s build logged any diagnostic — anything above `trace` level, which is where
-Lake puts its own chatter (the `lean` invocation, cache messages). `Try this` suggestions arrive
-as `info`, so a module whose build logged no diagnostics cannot yield any edits.
+/-- Whether `mod`'s build logged any diagnostics, or `none` if this cannot be determined.
 
-`none` means the trace file offers *no evidence either way*, and the caller must assume there may
-be edits: either it is missing, or it is `synthetic` — written by an artifact-cache fetch, which
-records an empty log regardless of what the original build logged.
+Care should be taken to only run this once `mod`'s build has completed; otherwise, it will blindly
+attempt to read the old trace file. Note that this lives in `LogIO`.
 
-Only meaningful once `mod`'s build has completed; called any earlier it reports on the *previous*
-run. -/
-def Lake.Module.loggedDiagnostics? (mod : Module) : JobM (Option Bool) := do
+Note that a trace file fetched from the lake cache produces `none`, since the log is cleared.
+
+Note also that "logging diagnostics" in the sense of this declaration means logging anything above
+`.trace`; `.trace` holds lake's own internal messages, such as calls to lean with explicit paths,
+and is generally populated even when no messages are logged during elaboration of the module. -/
+def Lake.Module.loggedDiagnostics? (mod : Module) : LogIO (Option Bool) := do
   match ← readTraceFile mod.traceFile with
   | .ok t => return if t.synthetic then none else some (t.log.maxLv > .trace)
   | .missing | .invalid => return none
