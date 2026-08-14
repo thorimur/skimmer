@@ -275,37 +275,56 @@ covers the exe binary only; the caller is responsible for the record's other dep
   return (args, ← fetchExeSpawnArgs refactorExe #[(toJson args).compress])
 
 /-- Builds `args.buildFile` (the module's `EditsRecord`) by running the refactor exe, unless it
-is up-to-date.
+is up-to-date. Returns `none` if `shouldRun` declines to run the exe at all.
 
 The record's saved input trace is `deps`'s trace mixed with `exeJob`'s (and any ambient trace).
 `deps` must carry everything that should invalidate the record — at minimum the module's
 source.
 
+`shouldRun` is evaluated in `JobM` *after* `deps` completes, so it may consult state that `deps`
+is responsible for producing — in particular the module's own build. Use it to avoid spawning
+the exe (which re-elaborates the module) when the answer is known to be empty.
+
 `restore := true` keeps the record materialized at `args.buildFile` on artifact-cache hits,
 since downstream facets read it back from that path. -/
 def refactorWithExe
-    (args : Skimmer.RefactorArgs) (exeJob : Job IO.Process.SpawnArgs) (deps : Job α) :
-    SpawnM (Job System.FilePath) :=
+    (args : Skimmer.RefactorArgs) (exeJob : Job IO.Process.SpawnArgs) (deps : Job α)
+    (shouldRun : JobM Bool := pure true) :
+    SpawnM (Job (Option System.FilePath)) :=
   exeJob.zipWith (sync := true) (fun spawnArgs _ => spawnArgs) deps |>.mapM fun spawnArgs => do
+    unless ← shouldRun do return none
     discard <| buildArtifactUnlessUpToDate (text := true) (restore := true) args.buildFile do
       discard <| captureProc spawnArgs
-    return args.buildFile
+    return some args.buildFile
+
+/-- Whether `mod`'s build logged any diagnostic — anything above `trace` level, which is where
+Lake puts its own chatter (the `lean` invocation, cache messages). `Try this` suggestions arrive
+as `info`, so a module whose build logged no diagnostics cannot yield any edits.
+
+`none` means the trace file offers *no evidence either way*, and the caller must assume there may
+be edits: either it is missing, or it is `synthetic` — written by an artifact-cache fetch, which
+records an empty log regardless of what the original build logged.
+
+Only meaningful once `mod`'s build has completed; called any earlier it reports on the *previous*
+run. -/
+def Lake.Module.loggedDiagnostics? (mod : Module) : JobM (Option Bool) := do
+  match ← readTraceFile mod.traceFile with
+  | .ok t => return if t.synthetic then none else some (t.log.maxLv > .trace)
+  | .missing | .invalid => return none
 
 open Skimmer
 
 -- TODO: check to make sure errors in leanArts make the whole thing fail?
 module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
   let (args, exeJob) ← mod.fetchRefactorWithExeSpawnArgs `recordCurrentTryThisRefactors `applyTryThisExe mod.setupFile #[]
-  let shouldAttempt :=
-    match ← readTraceFile mod.traceFile with
-    | .ok t => t.log.hasEntries
-    | _ => true
-  unless shouldAttempt do return Job.pure none
   let srcJob ← mod.lean.fetch
   let setupJob ← fetch <| mod.facet `setupWithTransPersistent
   -- `setupJob`'s trace transitively includes the module's full input trace (via `leanArts`);
   -- `srcJob` states the source dependency directly, without relying on that chain.
-  return (← refactorWithExe args exeJob (srcJob.mix setupJob)).map some
+  -- Since `setupJob` awaits `leanArts`, the module is built by the time `shouldRun` is evaluated,
+  -- so its trace file describes *this* run: the gate must live here, not in this `FetchM` body.
+  refactorWithExe args exeJob (srcJob.mix setupJob) do
+    return (← mod.loggedDiagnostics?) != some false
 
 library_facet recordCurrentTryThisRefactors (lib) : System.FilePath := do
   (← lib.modules.fetch).bindM fun mods => do
