@@ -17,80 +17,15 @@ package skimmer where version := v!"0.1.0"
 
 open Lean hiding Module
 
-/-- Copy-pasted from Lake.Build.Module for now; apparently lakefiles can't import private scopes by being modules? -/
-structure TransImportEntry where
-  mod : Module
-  /-- Whether to include all module artifacts and traverse the module's direct imports. -/
-  importAll : Bool
-  /-- Whether this module has been transitively imported by a `meta import`. -/
-  needsMeta : Bool
-
-/-- Copy-pasted from Lake.Build.Module for now; apparently lakefiles can't import private scopes by being modules? -/
-partial def fetchTransImportArts
-  (directImports : Array ModuleImport) (directArts : NameMap ImportArtifacts) (nonModule : Bool)
-: FetchM (NameMap ImportArtifacts) := do
-  let q ← directImports.foldrM (init := #[]) fun imp q => do
-    let some mod := imp.module? | return q
-    let input ← (← mod.input.fetch).await
-    let importAll := strictOr nonModule imp.importAll
-    return enqueue importAll imp.isMeta input q
-  walk directArts {} q
-where
-  walk s (metaVisited : NameSet) (q : Array TransImportEntry) := do
-    if h : 0 < q.size then
-      let {mod, importAll, needsMeta} := q.back
-      let q := q.pop
-      if let some arts := s.find? mod.name then
-        /-
-        A module system `import` may need to be promoted to a
-        wider import (`meta import`, `import all`) on another branch.
-        -/
-        -- Only re-process a module sitting at the plain public-module level: `.server` present =>
-        -- module, no `.private` => not already `import all`. An entry already at `import all` (with
-        -- `.private`) or a non-module (no `.server`) must not be re-inserted, as that would demote it.
-        let needsMeta := needsMeta && !metaVisited.contains mod.name
-        unless (importAll || needsMeta) && arts.oleanServer?.isSome && arts.oleanPrivate?.isNone do
-          return ← walk s metaVisited q
-      let info ← (← mod.exportInfo.fetch).await
-      let arts := if importAll then info.allArts else info.arts
-      let s := s.insert mod.name arts
-      let metaVisited := if importAll || needsMeta then metaVisited.insert mod.name else metaVisited
-      let input ← (← mod.input.fetch).await
-      let q := enqueue importAll needsMeta input q
-      walk s metaVisited q
-    else
-      return s
-  enqueue importAll needsMeta input q :=
-    input.imports.foldr (init := q) fun imp q =>
-      if let some mod := imp.module? then
-        let reachable := importAll || imp.isExported
-        let importAll := nonModule || (importAll && imp.importAll)
-        let needsMeta := needsMeta || (reachable && imp.isMeta)
-        if reachable || needsMeta then
-          q.push {mod, importAll, needsMeta}
-        else q
-      else q
-
-/-- `leanArts` writes a setup file that contains all transitive imports, and in that way differs slightly from what the `setup` facet gives. However, this file is "temporary" in that it is not added to the trace, so the artifacts we get from the cache don't include setup files, and `leanArts` can succeed with no `setupFile` present.
-
-We could be cleverer about this, recreating the trace and all. Instead, for maximal robustness, we just fetch leanArts to ensure everything is up to date, then recompute. (We could check that it exists first.)
--/
-module_facet setupWithTrans (mod) : ModuleSetup := do
-  (← mod.leanArts.fetch).bindM fun _ => do -- maybe writes setupFile to disk
-    (← mod.setup.fetch).mapM fun setup => do
-      let directImports := (← (← mod.input.fetch).await).imports
-      let transImpArts ← fetchTransImportArts directImports setup.importArts !setup.isModule
-      return {setup with importArts := transImpArts}
-
-abbrev Lake.Module.setupWithTrans (mod : Lake.Module) : BuildInfo :=
-  mod.facet `setupWithTrans
-
 module_facet setupWithTransPersistent (mod) : System.FilePath := do
-  (← mod.setupWithTrans.fetch).mapM fun setup => do
-    let file := mod.setupFile
-    createParentDirs file
-    IO.FS.writeFile file (toJson setup).pretty
-    return file
+  -- Ensure the module is built (TODO: consider moving this)
+  (← mod.elabArts.fetch).bindM fun _ => do
+    -- `setup` now includes transitive imports
+    (← mod.setup.fetch).mapM fun setup => do
+      let file := mod.setupFile
+      createParentDirs file
+      IO.FS.writeFile file (toJson setup).pretty
+      return file
 
 -- TODO: dot notation for custom module_facets when :/
 
@@ -314,14 +249,14 @@ def Lake.Module.loggedDiagnostics? (mod : Module) : LogIO (Option Bool) := do
 
 open Skimmer
 
--- TODO: check to make sure errors in leanArts make the whole thing fail?
+-- TODO: check to make sure errors in elabArts make the whole thing fail?
 module_facet recordCurrentTryThisRefactors (mod) : Option System.FilePath := do
   let (args, exeJob) ← mod.fetchRefactorWithExeSpawnArgs `recordCurrentTryThisRefactors `applyTryThisExe mod.setupFile #[]
   let srcJob ← mod.lean.fetch
   let setupJob ← fetch <| mod.facet `setupWithTransPersistent
-  -- `setupJob`'s trace transitively includes the module's full input trace (via `leanArts`);
+  -- `setupJob`'s trace transitively includes the module's full input trace (via `elabArts`);
   -- `srcJob` states the source dependency directly, without relying on that chain.
-  -- Since `setupJob` awaits `leanArts`, the module is built by the time `shouldRun` is evaluated,
+  -- Since `setupJob` awaits `elabArts`, the module is built by the time `shouldRun` is evaluated,
   -- so its trace file describes *this* run: the gate must live here, not in this `FetchM` body.
   refactorWithExe args exeJob (srcJob.mix setupJob) do
     return (← mod.loggedDiagnostics?) != some false
