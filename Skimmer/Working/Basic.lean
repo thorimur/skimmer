@@ -105,7 +105,7 @@ open Skimmer
     IO (Parser.InputContext × ImportsSetup × Language.Lean.InitialSnapshot) := do
   initSearchPath (← findSysroot)
   let source ← IO.FS.readFile args.mod.leanFile
-  let inputCtx := Parser.mkInputContext source args.mod.name.toString -- TODO check if correct
+  let inputCtx := Parser.mkInputContext source args.mod.leanFile.toString -- TODO check if correct
   let (setup, snap) ← Skimmer.runFrontend inputCtx args.setupFile
   -- IO.println setup.result!.get.imports
   let some setup := setup.result?.get | throw <| .userError "Could not find setup."
